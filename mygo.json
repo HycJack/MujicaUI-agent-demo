@@ -1,0 +1,6 @@
+{
+  "name": "mujicaui-agent-demo",
+  "identifier": "com.example.mujicauiagentdemo",
+  "version": "0.1.0",
+  "out": "build"
+}
