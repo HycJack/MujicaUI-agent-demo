@@ -175,7 +175,7 @@ func (a *app) settingsBody(c *ui.Context) {
 		})
 		ui.Box(c).Width(1).Shrink(0).Background(k.Border)
 		ui.Scroll(c).Grow(1).MinWidth(0).Children(func() {
-			ui.Column(c).Gap(14).Children(func() {
+			ui.Column(c).Gap(14).PaddingX(22).Children(func() {
 				switch a.settingsTab {
 				case "agent":
 					a.agentPane(c)
@@ -260,6 +260,12 @@ func (a *app) providersPane(c *ui.Context) {
 
 		// Model
 		a.modelField(c)
+
+		// Reasoning: a fixed ladder of thinking tiers; it belongs with the
+		// backend it applies to, and models without reasoning ignore it.
+		input.FormField(c, "Reasoning", input.FormFieldOptions{Description: "Thinking tier for models that support it; ignored otherwise."}, func() *ui.Element {
+			return input.Select(c, &a.llm.Thinking, reasoningTiers, input.SelectOptions{}).Element
+		})
 
 		// Test connection
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -521,11 +527,6 @@ func (a *app) agentPane(c *ui.Context) {
 			return ui.TextArea(c, &a.llm.SystemPrompt).MinHeight(96).Label("System prompt")
 		})
 
-		// Thinking level
-		input.FormField(c, "Reasoning", input.FormFieldOptions{Description: "Thinking budget for models that support it."}, func() *ui.Element {
-			return input.Select(c, &a.llm.Thinking, a.thinkingOptions(), input.SelectOptions{}).Element
-		})
-
 		// Temperature
 		input.FormField(c, "Temperature", input.FormFieldOptions{Description: "Sampling randomness; lower is more deterministic."}, func() *ui.Element {
 			return input.Slider(c, &a.llm.Temperature, input.SliderOptions{Min: 0, Max: 2, Step: 0.1, ShowValue: true, Label: "Temperature"}).Element
@@ -560,26 +561,15 @@ func (a *app) agentPane(c *ui.Context) {
 	})
 }
 
-// thinkingOptions is a copy of thinkOptions exposed for the Agent page.
-func (a *app) thinkingOptions() []input.SelectOption[string] {
-	out := make([]input.SelectOption[string], 0, 4)
-	for _, t := range thinkChoices {
-		if a.thinkingEnabled() || t == "none" {
-			out = append(out, input.SelectOption[string]{Value: t, Label: t})
-		}
-	}
-	return out
+// reasoningTiers is the fixed ladder of thinking levels surfaced in the
+// Providers pane, next to the backend it applies to; the values match
+// pi-ai's ThinkingLevel strings.
+var reasoningTiers = []input.SelectOption[string]{
+	{Value: "none", Label: "Off"},
+	{Value: "low", Label: "Low"},
+	{Value: "medium", Label: "Medium"},
+	{Value: "high", Label: "High"},
 }
-
-// thinkingEnabled mirrors thinkOptions so the dropdown shrinks for models that
-// cannot reason.
-func (a *app) thinkingEnabled() bool {
-	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
-	return err == nil && m.Reasoning
-}
-
-// thinkChoices is the ordered set of reasoning levels surfaced in the Agent UI.
-var thinkChoices = []string{"none", "low", "medium", "high"}
 
 // seedMaxTokensField initializes the max-tokens field from the resolved
 // model's default the first time that model is seen, leaving user edits alone

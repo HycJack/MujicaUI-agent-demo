@@ -81,16 +81,6 @@ func thinkDefault(m piai.Model) string {
 	return string(piai.ThinkingMedium)
 }
 
-// thinkOptions returns the thinking-level choices valid for the current model.
-func (a *app) thinkOptions() []string {
-	opts := []string{"none"}
-	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
-	if err == nil && m.Reasoning {
-		opts = append(opts, "low", "medium", "high")
-	}
-	return opts
-}
-
 // historyMessages converts the thread's user/assistant text rows into pi-ai
 // messages, skipping tool/demo/decorative rows so the LLM sees clean history.
 // A user row's llmText (draft + attached file contents) wins over its

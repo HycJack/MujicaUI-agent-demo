@@ -71,16 +71,19 @@ func (a *app) wsPreview(c *ui.Context, k tokensT) {
 		if a.repo.previewTruncated {
 			ui.Text(c, "truncated").FontSize(10).TextColor(k.TextMuted)
 		}
+		if formattable(a.repo.previewLang) {
+			ui.Segmented(c, &a.repo.wsFmt.tab, "Raw", "Fmt").Width(108)
+		}
 		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(a.repo.previewPath)) })
 	})
-	ui.Box(c).Height(220).Shrink(0).Clip().Children(func() {
+	ui.Box(c).Height(340).Shrink(0).Clip().Children(func() {
 		switch {
 		case a.repo.previewErr != "":
 			ui.Text(c, "⚠ "+a.repo.previewErr).FontSize(12).TextColor(kDanger(c))
 		case a.repo.previewLoading:
 			ui.Text(c, "Loading…").FontSize(12).TextColor(kTextMuted(c))
 		default:
-			code.CodeViewer(c, splitLines(a.repo.previewText), &a.repo.psrc,
+			code.CodeViewer(c, a.repo.wsFmt.render(a.repo.previewLang, a.repo.previewText), &a.repo.psrc,
 				code.CodeViewerOptions{Language: a.repo.previewLang, Label: a.repo.previewPath})
 		}
 	})
@@ -162,18 +165,21 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 		ui.Text(c, f.Path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
 		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(f.Path)) })
 	})
-	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
-	})
 	lang := previewLang(f.Path)
-	ui.Box(c).Grow(1).MinHeight(100).Clip().Children(func() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
+		if a.repo.codeTab == 1 && formattable(lang) {
+			ui.Segmented(c, &a.repo.srcFmt.tab, "Raw", "Fmt").Width(108)
+		}
+	})
+	ui.Box(c).Grow(1).MinHeight(220).Clip().Children(func() {
 		switch {
 		case v.diffLoading:
 			ui.Text(c, "Loading versions…").FontSize(12).TextColor(kTextMuted(c))
 		case v.diffErr != "":
 			ui.Text(c, "⚠ "+v.diffErr).FontSize(12).TextColor(kDanger(c))
 		case a.repo.codeTab == 1:
-			code.CodeViewer(c, splitLines(v.diffWt), &a.repo.dst, code.CodeViewerOptions{Language: lang, Label: f.Path})
+			code.CodeViewer(c, a.repo.srcFmt.render(lang, v.diffWt), &a.repo.dst, code.CodeViewerOptions{Language: lang, Label: f.Path})
 		default:
 			git.DiffViewer(c, &a.repo.diff, v.diffFrom, v.diffTo, git.DiffViewerOptions{Language: lang}).Fill()
 		}

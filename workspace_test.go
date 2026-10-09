@@ -183,3 +183,74 @@ func TestWorkspaceCommands(t *testing.T) {
 		t.Fatal("reload kept the preview")
 	}
 }
+
+// formatSource formats Go with gofmt and pretty-prints JSON in-process;
+// other languages (or unparsable sources) report not-formattable.
+func TestFormatSource(t *testing.T) {
+	raw := "package main\nfunc main(){\nx:=1\n_ = x\n}\n"
+	out, ok := formatSource("go", raw)
+	if !ok || !strings.Contains(out, "x := 1") {
+		t.Fatalf("gofmt view wrong: ok=%v out=%q", ok, out)
+	}
+	if _, ok := formatSource("go", "not go at all"); ok {
+		t.Fatal("unparsable go should not format")
+	}
+	out, ok = formatSource("json", `{"a":1,"b":[2,3]}`)
+	if !ok || !strings.Contains(out, "\n  \"a\": 1") {
+		t.Fatalf("json view wrong: %q", out)
+	}
+	if _, ok := formatSource("shell", "echo hi"); ok {
+		t.Fatal("shell should not be formattable")
+	}
+	if !formattable("go") || !formattable("json") || formattable("python") {
+		t.Fatal("formattable set wrong")
+	}
+}
+
+// fmtView renders raw until toggled, then serves the cached formatted copy
+// and recomputes when the content changes.
+func TestFmtViewToggle(t *testing.T) {
+	f := &fmtView{}
+	raw := "package main\nfunc main(){\nx:=1\n_ = x\n}\n"
+	if got := f.render("go", raw); len(got) == 0 || got[0] != "package main" {
+		t.Fatalf("raw render wrong: %v", got)
+	}
+	f.tab = 1
+	joined := strings.Join(f.render("go", raw), "\n")
+	if !strings.Contains(joined, "x := 1") {
+		t.Fatalf("formatted render wrong: %q", joined)
+	}
+	if f.key == "" {
+		t.Fatal("the cache key was not set")
+	}
+	other := "package main\nfunc main(){\ny:=2\n_ = y\n}\n"
+	if got := f.render("go", other); strings.Join(got, "\n") == joined {
+		t.Fatal("changed content kept the stale formatted cache")
+	}
+}
+
+// The workspace preview offers the Raw/Fmt toggle for formattable files and
+// renders both ways.
+func TestPreviewFormatToggle(t *testing.T) {
+	dir := t.TempDir()
+	raw := "package main\n\nfunc main(){\nx:=1\n_ = x\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp()
+	a.ws = newWorkspace(dir)
+	a.openWsPreview(filepath.Join(dir, "main.go"))
+	if !formattable(a.repo.previewLang) {
+		t.Fatalf("previewLang %q, want go", a.repo.previewLang)
+	}
+	if ui.Render(a.view, 1280, 820, 1) == nil {
+		t.Fatal("raw preview render nil")
+	}
+	a.repo.wsFmt.tab = 1
+	if ui.Render(a.view, 1280, 820, 1) == nil {
+		t.Fatal("formatted preview render nil")
+	}
+	if joined := strings.Join(a.repo.wsFmt.render("go", a.repo.previewText), "\n"); !strings.Contains(joined, "x := 1") {
+		t.Fatalf("formatted preview wrong: %q", joined)
+	}
+}

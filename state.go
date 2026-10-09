@@ -114,6 +114,32 @@ func seededFor(id string) thread {
 	}
 }
 
+// fmtView is one code pane's formatted-view toggle (gofmt / pretty JSON):
+// the Segmented binding plus a cache so the formatter runs once per
+// content, not once per frame.
+type fmtView struct {
+	tab   int      // 0 = raw, 1 = formatted
+	key   string   // lang + NUL + source text the cache was built from
+	lines []string // formatted lines when key matches
+}
+
+// render returns the lines to display: raw when toggled off (or the source
+// does not parse), the cached formatted copy otherwise.
+func (f *fmtView) render(lang, text string) []string {
+	if f.tab != 1 {
+		return splitLines(text)
+	}
+	key := lang + "\x00" + text
+	if f.key != key {
+		if out, ok := formatSource(lang, text); ok {
+			f.key, f.lines = key, splitLines(out)
+		} else {
+			f.key, f.lines = key, splitLines(text)
+		}
+	}
+	return f.lines
+}
+
 // repo is the right-hand inspector's state: the real git backend (vcs),
 // the workspace file preview the tree drives, and the component states.
 type repo struct {
@@ -128,6 +154,10 @@ type repo struct {
 	showRepo bool
 	codeTab  int // inspector bottom pane: 0 working diff, 1 file source
 	paneTab  int // right pane: 0 workspace tree, 1 repository
+
+	// formatted-view toggles (workspace preview / repository source tab)
+	wsFmt  fmtView
+	srcFmt fmtView
 
 	// workspace file preview (the tree's selected file)
 	psrc             code.CodeViewerState

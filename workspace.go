@@ -7,6 +7,9 @@ package main
 // headless (tests) they resolve synchronously.
 
 import (
+	"bytes"
+	"encoding/json"
+	"go/format"
 	"io"
 	"os"
 	"path/filepath"
@@ -287,9 +290,9 @@ func previewLang(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":
 		return "go"
-	case ".sh", ".bash":
+	case ".sh", ".bash", ".zsh":
 		return "shell"
-	case ".js", ".mjs", ".cjs":
+	case ".js", ".mjs", ".cjs", ".jsx":
 		return "javascript"
 	case ".ts", ".tsx":
 		return "typescript"
@@ -301,6 +304,33 @@ func previewLang(path string) string {
 		return "sql"
 	}
 	return ""
+}
+
+// formattable reports whether the language has an in-process formatter.
+func formattable(lang string) bool {
+	return lang == "go" || lang == "json"
+}
+
+// formatSource renders a formatted copy of text for the languages Atlas can
+// format in-process — gofmt for Go, two-space pretty-print for JSON. ok is
+// false for other languages or when the source does not parse (the caller
+// then shows the raw text).
+func formatSource(lang, text string) (string, bool) {
+	switch lang {
+	case "go":
+		out, err := format.Source([]byte(text))
+		if err != nil {
+			return "", false
+		}
+		return string(out), true
+	case "json":
+		var buf bytes.Buffer
+		if err := json.Indent(&buf, []byte(text), "", "  "); err != nil {
+			return "", false
+		}
+		return buf.String(), true
+	}
+	return "", false
 }
 
 // workspaceName is the status bar's short workspace label.

@@ -165,8 +165,8 @@ func TestProviderRebind(t *testing.T) {
 	}
 }
 
-// The agent dialog surfaces the configured backend and respects the reasoning
-// dropdown shrinking for models that cannot reason.
+// The agent dialog surfaces the configured backend; reasoning lives in the
+// Providers pane as a fixed tier ladder.
 func TestAgentSettings(t *testing.T) {
 	a := newApp()
 	a.openAgent()
@@ -175,9 +175,11 @@ func TestAgentSettings(t *testing.T) {
 	if ui.Render(a.view, 1280, 820, 1) == nil {
 		t.Fatal("agent render returned nil")
 	}
-	opts := a.thinkingOptions()
-	if len(opts) < 1 {
-		t.Fatal("thinking options should at least offer none")
+	if len(reasoningTiers) != 4 {
+		t.Fatalf("reasoning tiers = %d, want the Off/Low/Medium/High ladder", len(reasoningTiers))
+	}
+	if reasoningTiers[0].Value != "none" || reasoningTiers[3].Value != "high" {
+		t.Fatalf("unexpected tier values: %v", reasoningTiers)
 	}
 	// max tokens sync from the field
 	a.maxTokField = "4096"
@@ -195,7 +197,7 @@ func TestSettingsDialogsRender(t *testing.T) {
 		open  func(*app)
 		field string // a field unique to that dialog's content
 	}{
-		{"providers", (*app).openProviders, "Test connection"},
+		{"providers", (*app).openProviders, "Provider"},
 		{"agent", (*app).openAgent, "System prompt"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

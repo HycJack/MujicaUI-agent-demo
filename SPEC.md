@@ -132,7 +132,7 @@ require (
 | `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口）、会话栏、工作区、状态栏；快捷键；会话切换。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`、`actions`、`composer`（展示 `backendLabel`）。 |
 | `llm.go` | **pi-ai-go 集成层**：`resolveModel`（含 OpenAI 兼容端点直建模型）、`historyMessages`（用户行优先取 `llmText`）、`send`（附件文件内容折叠进消息）、`attachedFilesBlock`、`startStream`（goroutine 流式）、`streamOptions`、错误/中止处理。 |
-| `settings.go` | **Settings 模态框**：`settingsDialogs` + `settingsBody`（左侧源列表 `settingsNavItem` 切换分区）、`providersPane`（provider/model/Key/BaseURL，OpenAI 兼容端点、`fetchModels` 拉取模型、TreeSelect 选模型、Test connection）、`agentPane`（系统提示/推理/温度/限额）。 |
+| `settings.go` | **Settings 模态框**：`settingsDialogs` + `settingsBody`（左侧源列表 `settingsNavItem` 切换分区、正文 `PaddingX(22)` 留白）、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档** `reasoningTiers`，OpenAI 兼容端点、`fetchModels` 拉取模型、TreeSelect 选模型、Test connection）、`agentPane`（系统提示/温度/限额）。 |
 | `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`，`settings.json` 读写与回退。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`readCapped` 文件预览（256 KiB 上限）、`previewLang` 高亮映射、`attachFile` 附加到对话、`reloadWorkspace`。 |
@@ -397,7 +397,9 @@ Column (Fill, Background)
 左栏（`ui.Column` 宽 180，两条 `settingsNavItem` 可点行，选中项用 `Selection` 底 +
 `AccentText`）+ 1px 分隔条 + 右侧 `ui.Scroll(Grow 1, MinWidth 0)`（分区内容超出
 时在分区内滚动，内部不放 grow 元素）按 `a.settingsTab` 渲染
-`providersPane` / `agentPane`。选左侧行只切分区、不关对话框。
+`providersPane` / `agentPane`。滚动内容整体 `PaddingX(22)`：与分隔线、与滚动条
+都留出呼吸空间（滚动条贴滚动区右缘，样式由 ui.Scroll 内部决定，应用层不可调）。
+选左侧行只切分区、不关对话框。
 
 **Providers 分区 `providersPane(c)`**（编辑 `a.llm`，值即时生效）：
 - **Provider**：`input.Select`，选项 = `openai-compatible`（自定义端点）+ pi-ai 内置注册表。
@@ -405,6 +407,9 @@ Column (Fill, Background)
 - **API key**：`input.InputGroup`。
 - **Model**：`input.TreeSelect`（单选 `input.TreeSelect`，节点来自注册表模型；切 provider 后
   `rebindModel()` 重挂当前模型）。
+- **Reasoning**：`input.Select`，**固定四档** `reasoningTiers`——Off / Low / Medium /
+  High（值 `none/low/medium/high` 对应 pi-ai 的 ThinkingLevel）。它跟后端走，
+  所以放在 Providers 分区；不支持推理的模型忽略该值。
 - **Fetch models**（自定义端点或填了 Base URL 时出现）：`fetchModels()` 在 goroutine 里
   `GET {base}/models`（`Authorization: Bearer`），解析 `data[].id` 排序后写回
   `provView.fetched`，经 `a.redraw` 回到 UI 线程；TreeSelect 节点即该列表。
@@ -415,8 +420,8 @@ Column (Fill, Background)
 BaseURL: 去尾斜杠的用户 URL, ContextWindow: 8192}`（不走注册表）；Base URL 或模型为空报错。
 推理层级对自定义端点默认 `none`（注册表查不到推理能力）。
 
-**Agent 分区 `agentPane(c)`**：系统提示、推理层级、温度、最大 token、流式输出，
-同前（编辑 `a.llm`）。
+**Agent 分区 `agentPane(c)`**：系统提示、温度、最大 token、流式输出
+（编辑 `a.llm`；推理档位已移至 Providers）。
 
 **选 session 永远回到对话**：`openSession` 先 `closeModals()` 再切转录，
 所以开着设置框点左侧 session 也能正常切换并关掉对话框；`newThread` 同样 `closeModals()`。
@@ -524,8 +529,15 @@ Column(Fill)
    - `.Changed()`（单击选中）→ `selectWsNode(path, false)`；`.Submitted()`（Enter/双击）→
      `selectWsNode(path, true)`。文件 → `openWsPreview`；目录仅在 submitted 时翻转展开。
 3. **预览区**（`wsPreview`）：未选中时显示提示文案；选中后为标题行（`file-code` 图标 +
-   路径 + 超过 256 KiB 显示 `truncated` + `plus` 附加按钮）+ `ui.Box(Height 220, Clip)` 内的
+   路径 + 超过 256 KiB 显示 `truncated` + 可格式化语言显示 `Raw/Fmt` 分段 +
+   `plus` 附加按钮）+ `ui.Box(Height 340, Clip)` 内的
    `code.CodeViewer`（加载中/错误分别显示占位与 `⚠` 错误行）。
+
+**格式化视图（`fmtView` + `formatSource`）**：`Raw/Fmt` 分段切换只影响显示、
+**不写回磁盘**（工作区树保持只读）。`formatSource` 进程内完成——`.go` 走
+`go/format`（gofmt），`.json` 走 `json.Indent` 两空格美化；其它语言无格式化
+（分段不出现），源码解析失败时显示原文。`fmtView` 缓存格式化结果（键 =
+语言+NUL+内容），只在内容变化时重算，不逐帧跑 gofmt。
 
 **附加到对话（`attachFile`）**：把文件加入 composer 的 `chat.ContextChips`
 （`thread.ctx`，`ContextItem{ID:"file:<相对路径>", Kind:ContextFile}`）。入口有三处：
@@ -569,9 +581,10 @@ Column(Fill)
    提交期间 Busy 锁输入，成功后清空消息并刷新。
 6. **底部面板**（选中变更的 Diff / 源码）：
    - 标题行：`git.GitStatusBadge(status)` + 路径 + `plus` 附加按钮。
-   - `ui.Segmented(&codeTab, "Diff", "Source")`（宽 160）。
-   - `ui.Box(Grow 1, MinHeight 100, Clip)` 内，加载中/错误有占位：
-     - `codeTab==1` → `code.CodeViewer(splitLines(diffWt), &dst, …)`（工作区内容）。
+   - `ui.Segmented(&codeTab, "Diff", "Source")`（宽 160）；Source 且可格式化时
+     追加 `Raw/Fmt` 分段（宽 108，复用 §9.1 的 `fmtView`，实例独立）。
+   - `ui.Box(Grow 1, MinHeight 220, Clip)` 内，加载中/错误有占位：
+     - `codeTab==1` → `code.CodeViewer(srcFmt.render(lang, diffWt), &dst, …)`（工作区内容）。
      - 否则 → `git.DiffViewer(&diff, diffFrom, diffTo, …)`。
 
 **版本读取（`fileVersions`）**：Diff 需要新旧两个版本，按条目状态取——
@@ -690,6 +703,10 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 - [ ] Repository 标签（真实 git）：列出真实分支/变更/历史；行内按钮 stage/unstage、
   组按钮全部暂存/取消；选中变更驱动 Diff（暂存= HEAD vs index，未暂存= index vs 工作区）；
   提交输入写标题后 Commit 真实提交；切分支/建分支生效；刷新按钮重收状态。
+- [ ] Settings：正文与分隔线/滚动条留白（`PaddingX(22)`）；Reasoning 在 Providers
+  分区且为 Off/Low/Medium/High 四档；Agent 分区不再有推理项；分区切换高度不变。
+- [ ] 代码查看：预览高 340、仓库底部 Diff/源码区至少 220 且随空间生长；`.go`/`.json`
+  出现 Raw/Fmt 分段，Fmt 显示 gofmt/美化内容（不写盘）；`.jsx`/`.zsh` 等映射高亮。
 - [ ] 助理消息：复制写入剪贴板；重新生成有反馈。
 - [ ] 终端运行卡在 `rowCommand` 形态下可中止。
 
@@ -733,7 +750,10 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    分别落到正确的 `showRepo`/`paneTab`/`codeTab`，`workspace-open` 打开工作区对话框。
 5. **`TestSettingsDialogStableHeight` / `TestSettingsBodyHeight`**（`settings_nav_test.go`）——
    正文高度由窗高固定：切换分区正文矩形与标题 Y 不变，且随窗口变矮而变矮；钳制函数单测。
-6. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose`**（`config_test.go`）——
+6. **`TestFormatSource` / `TestFmtViewToggle` / `TestPreviewFormatToggle`**
+   （`workspace_test.go`）—— gofmt 规范化 `.go`、`json.Indent` 美化、解析失败/其它语言
+   不可格式化；`fmtView` 原始→格式化切换、缓存键随内容失效；预览区 Raw/Fmt 渲染。
+7. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose`**（`config_test.go`）——
    持久化往返（含 `maxTokField`/seededModel 预置）、瞬态字段不落盘、缺失/损坏回退默认、
    Escape 关闭对话框即保存。
 7. **`TestListDir` / `TestWorkspaceLazyLoad` / `TestWorkspacePreview` /
@@ -773,6 +793,13 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   无 push / pull / fetch，不做合并冲突处理；`git restore --staged` 需要 git ≥ 2.23。
 - 附件折叠进 LLM 消息时单文件上限 64 KiB（超出截断并注明）；预览上限 256 KiB；
   二进制文件显示占位文案。
+- 语法高亮只支持 CodeViewer 内置的 7 种语言（go / javascript / typescript /
+  python / json / shell / sql），`.md` / `.yaml` / `.html` 等按纯文本渲染；
+  格式化仅进程内两种（`.go` gofmt、`.json` 美化），且只影响显示、不写盘。
+- **不引入 LSP**（评估过 terax-clone 的做法：Go 侧 spawn 语言服务器、JSON-RPC
+  over stdio 桥接给 CodeMirror 编辑器）。Atlas 的 `code.CodeViewer` 是只读视图，
+  没有 hover / 补全 / 快速修复的宿主 UI；gopls 生命周期也让无窗口 CI 不可复现。
+  若未来需要语言智能，第一步是把诊断接到 `code.ProblemsPanel`，而不是整编辑器。
 - 工作区树根默认用户主目录，可从对话框切换（无系统原生目录选择器，路径需手输
   或从 recents 选）；忽略列表固定，预览上限 256 KiB（更大文件截断显示）。
 - 会话与对话记录持久化为本地 JSON（`sessions.json`）；线程的交互式组件状态
@@ -787,7 +814,9 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   处理合并冲突与 detached HEAD。
 - 工作区根目录选择器接入系统原生对话框、多工作区同时打开、树内文件过滤搜索、
   预览文件写回保存。
-- 在仓库面板加入 `code.ProblemsPanel` / `code.OutputPanel` / `code.Terminal`。
+- 在仓库面板加入 `code.ProblemsPanel` / `code.OutputPanel` / `code.Terminal`；
+  若引入 LSP，先把诊断（gopls 等）接进 ProblemsPanel（参考 terax-clone 的
+  `internal/lsp` JSON-RPC 会话管理）。
 - 借助 `core.Settings{Light/Dark}` 做运行时亮暗切换按钮。
 - 用 `chat.ConversationSearch` 给会话栏加搜索，`chat.ConversationItem` 支持重命名/置顶/删除。
 - 接入 pi-ai-go 的 `agent` 层完整工具循环（read/write/bash 等沙箱工具），把
