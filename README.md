@@ -19,8 +19,8 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 | --- | --- |
 | ![Conversation 对话线程](screenshots/chat-conversation.png) | ![Welcome 欢迎页](screenshots/chat-welcome.png) |
 | *对话线程：思考块、工具调用与文件变更卡* | *新会话欢迎页：能力卡与 starter 提示* |
-| ![Repo diff 工作区 Diff](screenshots/repo-diff.png) | ![Repo source 文件源码](screenshots/repo-source.png) |
-| *仓库检视器：工作区 Diff* | *仓库检视器：文件源码视图* |
+| ![Workspace tree 工作区目录树](screenshots/workspace-tree.png) | ![Repo diff 工作区 Diff](screenshots/repo-diff.png) |
+| *Workspace 标签：真实目录树 + 文件预览* | *Repository 标签：工作区 Diff* |
 | ![Providers 后端配置](screenshots/settings-providers.png) | ![Agent settings Agent 配置](screenshots/settings-agent.png) |
 | *Settings：Provider / 模型 / Key / Base URL* | *Settings：系统提示 / 推理 / 采样* |
 | ![Command palette 命令面板](screenshots/command-palette.png) | |
@@ -30,17 +30,20 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 
 ## Features 功能特性
 
-- **三栏工作台** —— 会话栏（左，⌘B 折叠）、对话线程（中）、仓库检视器（右，⌘J 折叠）；
+- **三栏工作台** —— 会话栏（左，⌘B 折叠）、对话线程（中）、检视器（右，⌘J 折叠）；
   全部由 MyGo 弹性布局原语拼装，标题栏与状态栏齐备。
 - **真实 LLM 流式对话** —— pi-ai-go 统一多模型 SDK：流式正文、思维链、工具调用卡、
   多文件 Diff 评审；无窗口（测试）环境下同步落定占位回复，保持确定性。
+- **Workspace 工作区树** —— 右栏 Workspace 标签浏览**真实目录**（启动目录为根）：
+  懒加载展开、目录优先排序、跳过 `.git` / `node_modules` 等噪音；点选文件在下方
+  预览源码（256 KiB 上限，按扩展名高亮），⌘K 可一键刷新；状态栏显示工作区名。
 - **Settings 模态框** —— Providers（Provider / 模型 / Key / Base URL，支持 OpenAI
   兼容端点与在线拉取模型列表）与 Agent（系统提示 / 推理层级 / 温度 / 限额）两个分区，
   值即时生效并持久化到本地（用户配置目录下的 `settings.json`，含 API Key，文件权限 0600），
   对话框高度固定、切换分区不跳动。
-- **仓库检视器** —— 分支切换、变更列表、提交历史、Diff / 源码分段视图（mock 数据，
-  只读演示）。
-- **⌘K 命令面板** —— 新建会话、导出、折叠面板、切换 Diff / 源码等 7 条命令。
+- **Repository 仓库检视器** —— 分支切换、变更列表、提交历史、Diff / 源码分段视图
+  （mock 数据，只读演示）。
+- **⌘K 命令面板** —— 新建会话、导出、折叠面板、工作区树、切换 Diff / 源码等 9 条命令。
 - **消息操作** —— 复制到剪贴板、重新生成、消息反馈。
 - **主题走令牌** —— 全部颜色经 MujicaUI `core.Tokens` 语义令牌，亮暗主题跟随系统。
 
@@ -87,7 +90,8 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 | `llm.go` | pi-ai-go 集成：模型解析、流式发送、中止与错误处理 |
 | `settings.go` | Settings 模态框：Providers / Agent 两个分区 |
 | `config.go` | 配置持久化：`settings.json` 的加载与保存 |
-| `repo.go` | 仓库检视器：分支、变更、提交、Diff / 源码 |
+| `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 文件预览 |
+| `repo.go` | 右栏检视器：Workspace 树 / Repository（分支、变更、提交、Diff / 源码） |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips |
 | `commands.go` | ⌘K 命令面板 |
 | `tokens.go` | 主题接入：MujicaUI 令牌转发 |

@@ -20,6 +20,8 @@ func (a *app) palette(c *ui.Context) {
 		{ID: "toggle-repo", Label: "Toggle repo inspector", Group: "View", Icon: icons.Must("git-pull-request")},
 		{ID: "providers", Label: "Providers settings", Group: "Settings", Keywords: []string{"backend", "api key"}, Icon: icons.Must("settings")},
 		{ID: "agent", Label: "Agent settings", Group: "Settings", Keywords: []string{"prompt", "model"}, Icon: icons.Must("bot")},
+		{ID: "workspace", Label: "Show workspace tree", Group: "Repo", Keywords: []string{"files", "directory"}, Icon: icons.Must("folder")},
+		{ID: "reload-workspace", Label: "Reload workspace", Group: "Repo", Keywords: []string{"refresh", "files"}, Icon: icons.Must("refresh-cw")},
 		{ID: "diff", Label: "Show working diff", Group: "Repo", Icon: icons.Must("git-commit-horizontal")},
 		{ID: "source", Label: "Show file source", Group: "Repo", Icon: icons.Must("file-code")},
 		{ID: "branch", Label: "Switch branch…", Group: "Repo", Icon: icons.Must("git-branch")},
@@ -48,12 +50,17 @@ func (a *app) runCommand(id string) string {
 		a.openProviders()
 	case "agent":
 		a.openAgent()
+	case "workspace":
+		a.repo.showRepo, a.repo.paneTab = true, 0
+	case "reload-workspace":
+		a.reloadWorkspace()
+		return "Workspace reloaded"
 	case "diff":
-		a.repo.showRepo, a.repo.codeTab = true, 0
+		a.repo.showRepo, a.repo.paneTab, a.repo.codeTab = true, 1, 0
 	case "source":
-		a.repo.showRepo, a.repo.codeTab = true, 1
+		a.repo.showRepo, a.repo.paneTab, a.repo.codeTab = true, 1, 1
 	case "branch":
-		a.repo.showRepo = true
+		a.repo.showRepo, a.repo.paneTab = true, 1
 		return "Pick a branch in the inspector"
 	}
 	return ""

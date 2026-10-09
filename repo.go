@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
+	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/ZacharyZhang-NY/MujicaUI/git"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
 	"github.com/egoist/mygo/ui"
@@ -18,7 +19,7 @@ import (
 // the changes list so a chosen row shows its diff.
 func demoFiles() []file {
 	return []file{
-		{path: "jobs/export-nightly.sh", status: git.GitModified, lang: "bash",
+		{path: "jobs/export-nightly.sh", status: git.GitModified, lang: "shell",
 			from: "#!/usr/bin/env bash\nbuild dump\nupload dump\n",
 			to:   "#!/usr/bin/env bash\nbuild dump\nprune yesterday\nupload dump\n"},
 		{path: "jobs/quota.go", status: git.GitModified, lang: "go",
@@ -60,51 +61,122 @@ func commitList() []git.Commit {
 	}
 }
 
-// repoPane is the right-hand inspector, shown when repo.showRepo is set.
+// repoPane is the right-hand inspector, shown when repo.showRepo is set:
+// a Workspace tab browsing the real directory tree, and a Repository tab
+// with the (demo) version-control side.
 func (a *app) repoPane(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(380).Shrink(0).Background(k.Surface).Padding(12).Gap(10).Children(func() {
-		// Header: title and a branch selector that actually switches branch.
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, icons.Must("git-branch")).FontSize(14).TextColor(k.TextMuted)
-			ui.Text(c, "Repository").FontSize(13).Bold().Grow(1)
-		})
-		sel := git.BranchSelector(c, &a.repo.branch, branchList(), git.BranchSelectorOptions{AllowCreate: true})
-		if sel.Changed() {
-			c.Toast("Switched to " + a.repo.branch)
+		ui.Segmented(c, &a.repo.paneTab, "Workspace", "Repository").FillWidth()
+		if a.repo.paneTab == 0 {
+			a.workspacePane(c, k)
+			return
 		}
-		if name, ok := sel.Created(); ok {
-			c.Toast("Created branch " + name)
+		a.repositoryPane(c, k)
+	})
+}
+
+// workspacePane is the Workspace tab: where the session runs, the real
+// directory tree below it, and the selected file's source at the bottom.
+func (a *app) workspacePane(c *ui.Context, k tokensT) {
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
+		ui.Text(c, a.ws.root).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(a.ws.root)
+		a.iconToggle(c, k, "refresh-cw", "Reload workspace", a.reloadWorkspace)
+	})
+	tree := data.Tree(c, &a.ws.tree, data.TreeOptions[string]{
+		Roots:      wsRoots(a.ws),
+		Children:   a.wsChildren,
+		Label:      wsLabel,
+		ItemStatus: a.wsItemStatus,
+		Load:       a.loadWsDir,
+		Empty:      "No workspace directory",
+	})
+	tree.Element.Grow(1).MinHeight(0)
+	if tree.Changed() {
+		if path, ok := a.ws.tree.Selected(); ok {
+			a.selectWsNode(path, false)
 		}
-
-		ui.Text(c, "Changes").FontSize(11).TextColor(k.TextMuted)
-		cl := git.ChangesList(c, &a.repo.changes, changedFiles(), git.ChangesListOptions{})
-		cl.Element.Height(96)
-
-		ui.Text(c, "History").FontSize(11).TextColor(k.TextMuted)
-		history := git.CommitList(c, &a.repo.commits, commitList(), git.CommitListOptions{})
-		history.Element.Height(96)
-
-		// Bottom pane: the chosen file's diff, or its source, toggled.
-		files := demoFiles()
-		i := a.repo.changes.Selected()
-		if i < 0 || i >= len(files) {
-			i = 0
+	}
+	if tree.Submitted() {
+		if path, ok := a.ws.tree.Selected(); ok {
+			a.selectWsNode(path, true)
 		}
-		f := files[i]
-		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			git.GitStatusBadge(c, f.status, git.GitStatusBadgeOptions{})
-			ui.Text(c, f.path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
-		})
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
-		})
-		ui.Box(c).Grow(1).MinHeight(140).Clip().Children(func() {
-			if a.repo.codeTab == 1 {
-				code.CodeViewer(c, splitLines(f.to), &a.repo.dst, code.CodeViewerOptions{Language: f.lang, Label: f.path})
-			} else {
-				git.DiffViewer(c, &a.repo.diff, f.from, f.to, git.DiffViewerOptions{Language: f.lang}).Fill()
-			}
-		})
+	}
+	a.wsPreview(c, k)
+}
+
+// wsPreview is the Workspace tab's bottom pane: the selected file's source,
+// or a hint while nothing is picked.
+func (a *app) wsPreview(c *ui.Context, k tokensT) {
+	if a.repo.previewPath == "" {
+		ui.Text(c, "Select a file to preview").FontSize(11).TextColor(k.TextMuted)
+		return
+	}
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, icons.Must("file-code")).FontSize(13).TextColor(k.TextMuted)
+		ui.Text(c, a.repo.previewPath).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		if a.repo.previewTruncated {
+			ui.Text(c, "truncated").FontSize(10).TextColor(k.TextMuted)
+		}
+	})
+	ui.Box(c).Height(220).Shrink(0).Clip().Children(func() {
+		switch {
+		case a.repo.previewErr != "":
+			ui.Text(c, "⚠ "+a.repo.previewErr).FontSize(12).TextColor(kDanger(c))
+		case a.repo.previewLoading:
+			ui.Text(c, "Loading…").FontSize(12).TextColor(kTextMuted(c))
+		default:
+			code.CodeViewer(c, splitLines(a.repo.previewText), &a.repo.psrc,
+				code.CodeViewerOptions{Language: a.repo.previewLang, Label: a.repo.previewPath})
+		}
+	})
+}
+
+// repositoryPane is the Repository tab: the branch list, the working
+// tree's changes, the commit log, and the diff of whichever file is
+// chosen — the version-control side of a Codex-style assistant.
+func (a *app) repositoryPane(c *ui.Context, k tokensT) {
+	// Header: title and a branch selector that actually switches branch.
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, icons.Must("git-branch")).FontSize(14).TextColor(k.TextMuted)
+		ui.Text(c, "Repository").FontSize(13).Bold().Grow(1)
+	})
+	sel := git.BranchSelector(c, &a.repo.branch, branchList(), git.BranchSelectorOptions{AllowCreate: true})
+	if sel.Changed() {
+		c.Toast("Switched to " + a.repo.branch)
+	}
+	if name, ok := sel.Created(); ok {
+		c.Toast("Created branch " + name)
+	}
+
+	ui.Text(c, "Changes").FontSize(11).TextColor(k.TextMuted)
+	cl := git.ChangesList(c, &a.repo.changes, changedFiles(), git.ChangesListOptions{})
+	cl.Element.Height(96)
+
+	ui.Text(c, "History").FontSize(11).TextColor(k.TextMuted)
+	history := git.CommitList(c, &a.repo.commits, commitList(), git.CommitListOptions{})
+	history.Element.Height(96)
+
+	// Bottom pane: the chosen file's diff, or its source, toggled.
+	files := demoFiles()
+	i := a.repo.changes.Selected()
+	if i < 0 || i >= len(files) {
+		i = 0
+	}
+	f := files[i]
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		git.GitStatusBadge(c, f.status, git.GitStatusBadgeOptions{})
+		ui.Text(c, f.path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
+	})
+	ui.Row(c).AlignItems(ui.Center).Children(func() {
+		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
+	})
+	ui.Box(c).Grow(1).MinHeight(140).Clip().Children(func() {
+		if a.repo.codeTab == 1 {
+			code.CodeViewer(c, splitLines(f.to), &a.repo.dst, code.CodeViewerOptions{Language: f.lang, Label: f.path})
+		} else {
+			git.DiffViewer(c, &a.repo.diff, f.from, f.to, git.DiffViewerOptions{Language: f.lang}).Fill()
+		}
 	})
 }
 

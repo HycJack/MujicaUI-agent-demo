@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"time"
 
 	piai "github.com/HycJack/pi-ai-go"
@@ -111,7 +112,8 @@ func seededFor(id string) thread {
 	}
 }
 
-// repo is the git state the right-hand pane inspects.
+// repo is the git state the right-hand pane inspects, plus the workspace
+// file preview the tree drives.
 type repo struct {
 	changes  git.ChangesListState
 	branches data.ListState[string]
@@ -121,6 +123,16 @@ type repo struct {
 	branch   string
 	showRepo bool
 	codeTab  int // inspector bottom pane: 0 working diff, 1 file source
+	paneTab  int // right pane: 0 workspace tree, 1 repository
+
+	// workspace file preview (the tree's selected file)
+	psrc             code.CodeViewerState
+	previewPath      string
+	previewLang      string
+	previewText      string
+	previewErr       string
+	previewLoading   bool
+	previewTruncated bool
 }
 
 // file describes a changed file plus the new text shown in the code view.
@@ -173,6 +185,7 @@ func (a *app) defaultSettings() LLMSettings {
 type app struct {
 	thread    thread
 	repo      repo
+	ws        workspace
 	conv      chat.ChatConversation
 	convList  chat.ConversationListState
 	sessionID string
@@ -209,6 +222,13 @@ func newApp() *app {
 	a.llm = a.defaultSettings()
 	if p, err := settingsFile(); err == nil {
 		a.configPath = p
+	}
+	// The workspace is the directory the app runs from; when it cannot be
+	// resolved the tree shows its empty state.
+	if wd, err := os.Getwd(); err == nil {
+		a.ws = newWorkspace(wd)
+	} else {
+		a.ws = newWorkspace("")
 	}
 	a.provView = defaultProviderView()
 	a.agentView = defaultAgentView()

@@ -122,11 +122,12 @@ func (a *app) content(c *ui.Context, k tokensT) {
 	})
 }
 
-// statusbar is the strip along the bottom: branch, mode and context on
-// the left; a live dot on the right.
+// statusbar is the strip along the bottom: workspace, branch, mode and
+// context on the left; a live dot on the right.
 func (a *app) statusbar(c *ui.Context, k tokensT) {
 	layout.StatusBar(c, layout.StatusBarOptions{
 		Left: []layout.StatusItem{
+			{ID: "workspace", Text: workspaceName(a.ws.root), Icon: icons.Must("folder")},
 			{ID: "branch", Text: a.repo.branch, Icon: icons.Must("git-branch")},
 			{ID: "mode", Text: modeName(a.thread.mode), Icon: icons.Must("brain")},
 			{ID: "ctx", Text: "6.4k / 8k tokens", Icon: icons.Must("sliders-horizontal")},

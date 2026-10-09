@@ -100,7 +100,7 @@ func TestSessionSwitch(t *testing.T) {
 // move the panels they name.
 func TestPaletteCommands(t *testing.T) {
 	a := newApp()
-	for _, id := range []string{"new", "export", "toggle-nav", "toggle-repo", "providers", "agent", "diff", "source", "branch"} {
+	for _, id := range []string{"new", "export", "toggle-nav", "toggle-repo", "providers", "agent", "workspace", "reload-workspace", "diff", "source", "branch"} {
 		a.runCommand(id)
 		if ui.Render(a.view, 1280, 820, 1) == nil {
 			t.Fatalf("render nil after command %q", id)
@@ -114,13 +114,17 @@ func TestPaletteCommands(t *testing.T) {
 	if !a.settingsOpen || a.settingsTab != "agent" {
 		t.Fatal("agent command should open settings on the agent pane")
 	}
+	a.runCommand("workspace")
+	if !a.repo.showRepo || a.repo.paneTab != 0 {
+		t.Fatal("workspace command should show the inspector on the workspace tab")
+	}
 	a.runCommand("diff")
-	if !a.repo.showRepo || a.repo.codeTab != 0 {
-		t.Fatal("diff should show the inspector on the diff tab")
+	if !a.repo.showRepo || a.repo.paneTab != 1 || a.repo.codeTab != 0 {
+		t.Fatal("diff should show the repository tab on the diff pane")
 	}
 	a.runCommand("source")
-	if a.repo.codeTab != 1 {
-		t.Fatal("source should switch to the source tab")
+	if a.repo.paneTab != 1 || a.repo.codeTab != 1 {
+		t.Fatal("source should switch to the repository tab's source pane")
 	}
 	if chat.ModeAgent == chat.ModeChat {
 		t.Fatal("mode constants collapsed")

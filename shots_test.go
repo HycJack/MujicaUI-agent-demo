@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -42,6 +43,18 @@ func TestScreenshots(t *testing.T) {
 	}
 
 	shot("chat-conversation", newApp()) // the seeded "nightly export" thread
+
+	wk := newApp()
+	wk.runCommand("workspace")
+	wk.ws.tree.SetOpen(wk.ws.root, true)
+	wk.loadWsDir(wk.ws.root) // headless: lists synchronously
+	for _, e := range wk.wsChildren(wk.ws.root) {
+		if filepath.Base(e) == "main.go" || strings.HasSuffix(e, ".go") {
+			wk.openWsPreview(e)
+			break
+		}
+	}
+	shot("workspace-tree", wk)
 
 	w := newApp()
 	w.newThread()
