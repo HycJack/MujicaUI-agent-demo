@@ -133,7 +133,9 @@ require (
 | `main.go` | 入口：`newApp()`、`loadSettings()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
 | `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText` 与 `tool *toolRun`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
 | `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树、工作区、状态栏；快捷键；会话切换。 |
-| `thread.go` | 对话线程：`threadView`、`renderRow`（思考/文本/工具调用/命令执行/文件变更五类卡片，全部读真实 `row.tool` 数据）、`actions`、`composer`。 |
+| `thread.go` | 对话线程：`threadView`、`renderRow`（一条回复一个气泡：等待提示 + 思考/工具折叠块 + 可选中正文）、`actions`（复制/重新生成/时间）、`composer`。 |
+| `mdparse.go` | Markdown 块级解析：标题/散文段（跨段合并）/列表/引用/表格/代码围栏/分隔线 → `[]mdBlock`。 |
+| `mdview.go` | 可选中 Markdown 渲染：块缓存（`ui.Local`）+ 每帧重建，全元素 `.Selectable()`，行内 Span/链接双形式，代码块用 `chat.CodeBlock`。 |
 | `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（整条回复进一行：思考/文本增量刷新当前行，工具调用 `appendTurnTool` 进该行的卡片块，跨轮正文空行衔接）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
 | `agenttools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以工作区为根，`write_file` 自动建父目录。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
@@ -242,7 +244,6 @@ type thread struct {
     draft  string
     mode   chat.ChatMode
     model  string
-    rating chat.MessageFeedback
     think  bool
     ctx    []chat.ContextItem
     plan   agent.FileDecision   // FileChangeCard 的抉择
@@ -405,7 +406,8 @@ Column (Fill, Background)
 
 > **一条回复一个气泡**：思考 + 工具调用折叠进该行的 `ThinkingBlock`（每行独立的
 > `thinkOpen` 开合状态），正文在块下方；流式期间正文走 `StreamingText`（纯文本 +
-> 光标），完成后走 `chat.MarkdownView`（标题/列表/表格/代码块全量渲染）。
+> 光标，无内容时先显示 `TypingIndicator` 等待点），完成后走自研 `mdView`
+> （标题/列表/表格/代码块全量渲染，**全元素可拖选复制**）。
 > 线程约定：UI 线程持有全部状态。goroutine 只缓冲局部字符串，经
 > `a.redraw(fn)`（即 `win.Update`）把 `fn` 调度回 UI 线程再改状态；闭包**不能**捕获
 > `strings.Builder`（`win.Update` 不等待 `fn`，闭包可能在 goroutine 退出后执行）。
@@ -489,22 +491,41 @@ Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直�
 
 **一条 AI 回复 = 一个气泡**（`rowReasoned`）：思考 + 工具调用折叠进可收起的
 `ThinkingBlock`（每行独立 `thinkOpen`），正文在块下方——流式期间 `StreamingText`
-（纯文本 + 光标），完成后 `chat.MarkdownView`（标题/有序无序列表/表格/代码块）。
+（纯文本 + 光标，等待首 token 时显示 `TypingIndicator`），完成后 `mdView`
+（标题/有序无序列表/表格/代码块，**可拖选复制**）。
 
 | kind | 组件 |
 | --- | --- |
 | `rowTyping` | `chat.TypingIndicator(c, "Atlas")` |
-| `rowReasoned` | `MessageBubble` → [`ThinkingBlock(&r.thinkOpen, {Thinking: streaming, Started: at})`：思考文本 + `toolCards(r)`（bash→`CommandExecutionCard` 可中止、write_file→`FileChangeCard`、其余→`ToolCallCard`）] + 正文（`StreamingText` / `MarkdownView`）+ `actions` |
+| `rowReasoned` | `MessageBubble` → [等待提示（streaming 且无思考/工具/正文时 `TypingIndicator`）+ `ThinkingBlock(&r.thinkOpen, {Thinking: streaming, Started: at})`：思考文本（Selectable）+ `toolCards(r)`（bash→`CommandExecutionCard` 可中止、write_file→`FileChangeCard`、其余→`ToolCallCard`）] + 正文（streaming→`StreamingText`；完成→**`mdView` 可选中 Markdown**）+ `actions` |
 | `rowTools` / `rowCommand` / `rowDiff` | **旧版独立工具行**（合并前存储的转录仍可显示），渲染分支保留 |
-| 默认 | `MessageBubble` → `chat.MarkdownView(text)` + `actions` |
+| 默认（用户/纯文本行） | `MessageBubble` → `ui.RichText(Span).Selectable()`（原文逐字、可选中）+ `actions` |
 
 助理消息的 `MessageBubbleOptions{Name:"Atlas"}`。
 
-### 7.4 `actions(c, r)`
+### 7.3.1 可选中 Markdown（`mdparse.go` / `mdview.go`）
 
-仅助理行显示 `chat.MessageActions(&rating)`：
-- `ActionCopy` → `c.WriteClipboard(r.text)` + toast。
-- `ActionRegenerate` → toast。
+MujicaUI 的 `chat.MarkdownView` 构建的文本元素**不可选中**（且解析器在 internal 包，
+无法外部定制），Atlas 自带适配自 mygo-agent 参考渲染器的实现：
+
+- `parseMarkdown(src) []mdBlock`（`mdparse.go`）：块级解析——标题、**散文段
+  （连续段落与空行合并为一个 run，拖选可跨段）**、列表（含有序）、引用、表格、
+  围栏/缩进代码、分隔线。
+- `mdView(c, src)`（`mdview.go`）：块缓存挂行元素（`ui.Local`，src 变化重解析），
+  每帧重建原生元素；**所有文本 `.Selectable()`**（标题/段落/列表项/引用/表格单元格），
+  拖选 + Ctrl+C 可复制；行内 `code`/`**bold**`/`~~strike~~` 走构造器 Span，含
+  `[link](url)` 的段落走元素形式保链接可点；代码块用 `chat.CodeBlock`（自带复制/折叠）。
+
+### 7.4 `actions(c, r)` —— 每条消息下的操作行
+
+自绘小图标按钮（`ui.ButtonBase` 22×22 + `icons.Must`），**不用** `chat.MessageActions`
+（其赞/踩/朗读/分享/编辑按钮 Atlas 不用）：
+
+- **复制**（所有消息）：`c.WriteClipboard(r.text)` + toast。
+- **重新生成**（仅助理行）：`regenerate(r)` —— 忙时 toast 提示；否则**删掉该回复及
+  其后所有行**、追加新的 streaming 回复行（id 带 `regenSeq` nonce，避免元素状态串用）、
+  `startStream(idx-1, id)` 重跑同一历史。
+- **时间**：`r.at.Format("15:04")`，muted 小字。
 
 ### 7.5 `composer(c)`
 
@@ -513,11 +534,11 @@ Column(Gap 8)
 ├── chat.ContextChips(&ctx, {Max:2})        可移除上下文芯片
 ├── chat.PromptComposer(&draft, {
 │       Placeholder,
-│       Tools:  () -> chat.ModeSelector(&mode),        模式选择（chat/agent）
 │       Actions:() -> chat.SendButton({Shortcut:"Enter", Disabled: draft 空})
 │   })  → Submitted() 也触发 send
+│       （chat/agent 模式选择器已移除——Atlas 固定 Agent 模式）
 └── Row(Wrap)
-    ├── chat.ModelSelector(&model, [Atlas 4, Swift Mini])
+    ├── 后端标签（Agent 设置页设定）
     └── chat.TokenCounter(6400, 8000)
 ```
 
@@ -794,9 +815,10 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 | 外壳/标题/状态 | `layout.TitleBar`、`layout.StatusBar` |
 | 会话树/目录树 | MyGo `ui.Outline`（自定义行 + 原生 `Element.ContextMenu`） |
 | 对话容器/列表 | `chat.ChatContainer`、`chat.MessageList`(+Options) |
-| 消息体 | `chat.MessageBubble`、`chat.MarkdownView`、`chat.StreamingText`、`chat.ThinkingBlock`、`chat.TypingIndicator` |
-| 消息操作 | `chat.MessageActions` |
-| 输入区 | `chat.PromptComposer`、`chat.SendButton`、`chat.ModeSelector`、`chat.ModelSelector`、`chat.ContextChips`、`chat.TokenCounter` |
+| 消息体 | `chat.MessageBubble`、自研 `mdView`（可选中 Markdown）、`chat.StreamingText`、`chat.ThinkingBlock`、`chat.TypingIndicator` |
+| 消息操作 | 自绘 `ui.ButtonBase` 图标按钮（copy / regenerate）+ 时间戳 |
+| 输入区 | `chat.PromptComposer`、`chat.SendButton`、`chat.ContextChips`、`chat.TokenCounter` |
+| Markdown | 自研 `mdView`（`mdparse.go`/`mdview.go`，全元素 Selectable）+ `chat.CodeBlock` |
 | 欢迎 | `chat.WelcomeScreen`、`chat.SuggestionChips`、`chat.CapabilityCard` |
 | Agent 卡 | `agent.ToolCallCard`、`agent.FileChangeCard`、`agent.CommandExecutionCard`、`agent.MultiFileDiffReview` |
 | 仓库 | `git.BranchSelector`、`git.ChangesList`、`git.CommitInput`、`git.CommitList`、`git.DiffViewer`、`git.GitStatusBadge` |
@@ -865,6 +887,12 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    夹具（`convfixture_test.go`：一条含思考 + 三个工具卡 + Markdown 列表/表格正文
    的合并回复）回归 Row/Stretch 布局塌陷；首帧末行可见、上滚后首行与 Markdown
    元素可见。
+15. **`TestMdParseBlocks` / `TestMdViewRender` / `TestMessageActionsCopyAndTime` /
+   `TestRegenerateRow` / `TestWaitingIndicatorRenders`**（`mdview_test.go`）——
+   解析器块形（散文跨段合并、有序/无序列表、表格、围栏、标题、引用、分隔线）；
+   渲染不 panic；**每条消息的复制按钮**（点击 → 剪贴板为该行文本）与时间显示；
+   **重新生成**（删回复及其后行、追加新 streaming 行、id 换新、忙时拒绝）；
+   等待首 token 时显示打字点。
 
 ---
 

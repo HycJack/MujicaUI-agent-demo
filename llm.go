@@ -144,7 +144,7 @@ func (a *app) send() {
 	a.thread.list.ScrollToEnd()
 	a.markDirty(a.sessionID) // the user row lands in its transcript file
 	a.persistSessions()
-	a.startStream(userIdx)
+	a.startStream(userIdx, fmt.Sprintf("a%d", userIdx+1))
 }
 
 // attachedFilesBlock renders the thread's attached file chips as a prompt
@@ -175,14 +175,13 @@ func (a *app) attachedFilesBlock() (names, block string) {
 	return strings.Join(list, ", "), sb.String()
 }
 
-// startStream launches the pi-ai agent loop for the already-appended user
-// row at userIdx. The whole reply — every turn's thinking, text and tool
-// executions — folds into the ONE assistant row send() appended, so a
-// multi-step agent answer shows as a single message with a collapsible
-// thinking-and-tools block.
-func (a *app) startStream(userIdx int) {
+// startStream launches the pi-ai agent loop for the user row at userIdx,
+// streaming the whole reply into the ONE assistant row named by rowID
+// (send() appends it; regenerate() re-mints it) — every turn's thinking,
+// text and tool executions fold into that single message.
+func (a *app) startStream(userIdx int, rowID string) {
 	assistantIdx := userIdx + 1
-	curID := fmt.Sprintf("a%d", assistantIdx) // the row send() appended
+	curID := rowID
 	a.llm.Busy = true
 	a.llm.LastError = ""
 	ctx, cancel := context.WithCancel(context.Background())

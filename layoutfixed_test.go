@@ -33,20 +33,25 @@ func TestChatPaneLayout(t *testing.T) {
 		}
 	}
 
-	// Scrolling up brings the first rows into view with real sizes.
+	// Scrolling up brings the first rows into view with real sizes. The
+	// user row is found exactly; the markdown content (paragraph runs,
+	// list items, table cells) is asserted by substring — consecutive
+	// prose paragraphs merge into one selectable element.
 	tst.Scroll(600, 300, 0, -5000)
 	tst.Frame()
 	tst.Frame()
+	r, ok := tst.Find("The nightly export failed again. Find out why and fix the job.")
+	if !ok || r.W <= 0 || r.H <= 0 {
+		t.Fatalf("scrolled-up row not visible (ok=%v rect={%g %g %g %g})", ok, r.X, r.Y, r.W, r.H)
+	}
 	for _, s := range []string{
-		"The nightly export failed again. Find out why and fix the job.",
-		// a1's answer, rendered as markdown (the ** markers are gone, the
-		// ordered list and the table build their own elements).
-		"The job died on a quota error at 02:14 — the archive bucket holds seven days of dumps.",
-		"Raised the retention cap in jobs/export-nightly.sh",
+		"the archive bucket holds seven days of dumps.",      // a1's paragraph
+		"Raised the retention cap in jobs/export-nightly.sh", // ordered list item
+		"quota exceeded",      // table cell
+		"Watching; I'll post", // a2 stays rendered
 	} {
-		r, ok := tst.Find(s)
-		if !ok || r.W <= 0 || r.H <= 0 {
-			t.Fatalf("scrolled-up row %q not visible (ok=%v rect={%g %g %g %g})", s, ok, r.X, r.Y, r.W, r.H)
+		if !tst.HasText(s) {
+			t.Fatalf("markdown content %q not rendered", s)
 		}
 	}
 }

@@ -65,14 +65,13 @@ type toolRun struct {
 
 // thread is the working conversation Atlas renders in the center pane.
 type thread struct {
-	rows   []row
-	list   chat.MessageListState
-	draft  string
-	mode   chat.ChatMode
-	model  string
-	rating chat.MessageFeedback
-	think  bool
-	ctx    []chat.ContextItem
+	rows  []row
+	list  chat.MessageListState
+	draft string
+	mode  chat.ChatMode
+	model string
+	think bool
+	ctx   []chat.ContextItem
 }
 
 // session is one item of the sessions list; ws is the workspace
@@ -193,6 +192,7 @@ type app struct {
 	threads   map[string]thread // in-flight transcripts, keyed by session
 	threaded  map[string]bool   // sessions that have a transcript on disk
 	dirty     map[string]bool   // transcripts changed since their last persist
+	regenSeq  int               // nonce for regenerated reply row ids
 
 	// llm
 	llm           LLMSettings

@@ -7,12 +7,14 @@ package main
 // agent thread but as the app's working surface.
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
+	"github.com/ZacharyZhang-NY/MujicaUI/icons"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -67,6 +69,11 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 		})
 	case rowReasoned:
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
+			// Waiting for the model's first token: show the typing dots so
+			// the reply never sits as an empty bubble.
+			if r.streaming && r.text == "" && r.thinkText == "" && len(r.tools) == 0 {
+				chat.TypingIndicator(c, "Atlas")
+			}
 			if r.thinkText != "" || len(r.tools) > 0 {
 				chat.ThinkingBlock(c, &r.thinkOpen, chat.ThinkingBlockOptions{
 					Thinking: r.streaming && r.text == "",
@@ -74,7 +81,7 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 				}, func() {
 					ui.Column(c).Gap(8).Children(func() {
 						if r.thinkText != "" {
-							ui.Text(c, r.thinkText)
+							ui.Text(c, r.thinkText).Selectable()
 						}
 						a.toolCards(c, r)
 					})
@@ -84,14 +91,16 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 			case r.streaming:
 				chat.StreamingText(c, r.text, chat.StreamingTextOptions{Streaming: r.text != ""})
 			case r.text != "":
-				chat.MarkdownView(c, r.text)
+				mdView(c, r.text) // selectable markdown once the reply is done
 			}
 			a.actions(c, r)
 		})
 	default:
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
 			if r.text != "" {
-				chat.MarkdownView(c, r.text)
+				// User text stays literal: one selectable element, no
+				// markdown interpretation of what the user typed.
+				ui.RichText(c, ui.Span{Text: r.text}).FontSize(14).LineHeight(1.6).Selectable()
 			}
 			a.actions(c, r)
 		})
@@ -125,25 +134,70 @@ func (a *app) toolCards(c *ui.Context, r *row) {
 	}
 }
 
-// actions is the copy/regenerate/feedback row assistant messages carry.
+// actions is the quiet row under every message: copy for all messages,
+// regenerate for assistant replies, and the message time. The library's
+// MessageActions toolbar also ships like/dislike/speak/share/edit, which
+// Atlas does not use — these two buttons are the whole set.
 func (a *app) actions(c *ui.Context, r *row) {
-	if r.role != chat.MessageAssistant {
-		return
-	}
-	res := chat.MessageActions(c, r.role, chat.MessageActionsOptions{Feedback: &a.thread.rating})
-	if act, ok := res.Action(); ok {
-		switch act {
-		case chat.ActionCopy:
+	k := tokens(c)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if msgIconBtn(c, k, "copy", "Copy") {
 			c.WriteClipboard(r.text)
 			c.Toast("Copied to the clipboard")
-		case chat.ActionRegenerate:
-			c.Toast("Regenerating…")
 		}
+		if r.role == chat.MessageAssistant && msgIconBtn(c, k, "refresh-cw", "Regenerate") {
+			if msg := a.regenerate(r); msg != "" {
+				c.Toast(msg)
+			}
+		}
+		ui.Text(c, r.at.Format("15:04")).FontSize(11).TextColor(k.TextMuted).SingleLine()
+	})
+}
+
+// msgIconBtn is a small quiet icon button; it reports its click.
+func msgIconBtn(c *ui.Context, k tokensT, icon, label string) bool {
+	b := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(5).Center().Cursor(ui.CursorPointer)
+	if b.Hovered() {
+		b.Background(k.SurfaceHover)
 	}
+	clicked := b.Clicked()
+	b.Children(func() {
+		ui.Icon(c, icons.Must(icon)).FontSize(12).TextColor(k.TextMuted)
+	})
+	return clicked
+}
+
+// regenerate re-runs the user prompt that precedes an assistant reply:
+// the reply and everything after it are dropped, a fresh streaming reply
+// row is appended, and the agent loop starts over with the same history.
+// It returns a toast message, empty when the regenerate started.
+func (a *app) regenerate(r *row) string {
+	if a.llm.Busy {
+		return "Wait for the current reply to finish"
+	}
+	idx := slices.IndexFunc(a.thread.rows, func(x row) bool { return x.id == r.id })
+	if idx <= 0 || a.thread.rows[idx-1].role != chat.MessageUser {
+		return "Nothing to regenerate"
+	}
+	a.thread.rows = a.thread.rows[:idx]
+	// A unique id so the fresh row gets fresh element state (the md parse
+	// cache rides the row element).
+	a.regenSeq++
+	id := fmt.Sprintf("a%d-r%d", idx, a.regenSeq)
+	a.thread.rows = append(a.thread.rows, row{
+		id: id, role: chat.MessageAssistant, kind: rowReasoned,
+		at: time.Now(), streaming: true,
+	})
+	a.thread.list.ScrollToEnd()
+	a.markDirty(a.sessionID)
+	a.persistSessions()
+	a.startStream(idx-1, id)
+	return ""
 }
 
 // composer is the thread's input area: context chips, the prompt editor
-// with a mode picker and send button, then the model and a context meter.
+// with a send button, then the model and a context meter. The chat/agent
+// mode picker is gone — Atlas is an agent console, the mode stays Agent.
 func (a *app) composer(c *ui.Context) {
 	ui.Column(c).Gap(8).Children(func() {
 		if id, ok := chat.ContextChips(c, a.thread.ctx, chat.ContextChipsOptions{Max: 2}).Removed(); ok {
@@ -151,7 +205,6 @@ func (a *app) composer(c *ui.Context) {
 		}
 		p := chat.PromptComposer(c, &a.thread.draft, chat.PromptComposerOptions{
 			Placeholder: "Direct Atlas — it can read files, run commands and edit.",
-			Tools:       func() { chat.ModeSelector(c, &a.thread.mode, chat.ModeSelectorOptions{}) },
 			Actions: func() {
 				if chat.SendButton(c, chat.SendButtonOptions{
 					Shortcut: "Enter", Disabled: strings.TrimSpace(a.thread.draft) == "",
