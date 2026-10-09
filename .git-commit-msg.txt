@@ -1,0 +1,25 @@
+Move the data store to the home directory; migrate the old AppData store
+
+The app data (settings.json, workspace.json, the session index and the
+per-session transcripts) now lives in the user HOME directory under
+~/.mujicaui-agent-demo/ (C:\Users\<you>\.mujicaui-agent-demo\ on Windows)
+instead of the OS config directory (%AppData% on Windows) and never in
+the executable's launch directory.
+
+- configDir() resolves ~/.mujicaui-agent-demo; settingsFile(),
+  wsPrefsFile() and sessionsFile() all build on it.
+- migrateConfigDir() runs once at startup: if a legacy store exists under
+  %AppData%\MujicaUI-agent-demo\, its settings, workspace prefs, session
+  index and every transcript file are copied into the home directory.
+  Files already present in the new location are never overwritten (newer
+  data wins) and the old folder is left untouched as a backup, so the
+  stored API key and conversations survive the move.
+- All copies go through the atomic writer, so the migration cannot leave
+  a half-written file behind.
+
+Tests: new TestConfigDirMigration covers the copy (all four file kinds),
+the never-overwrite rule, and that the legacy folder survives; the
+migration core takes explicit directories so tests inject temp dirs.
+
+Docs: SPEC sections 1/4/7.1.1/9.4/15 and the README updated for the
+home-directory layout and the one-time migration.

@@ -10,10 +10,57 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 )
+
+// An old store under the OS config directory migrates into the home
+// directory once: settings, workspace prefs, the session index and every
+// per-session transcript — never overwriting newer files.
+func TestConfigDirMigration(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	write := func(rel, body string) {
+		path := filepath.Join(oldDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("settings.json", `{"provider":"deepseek","apiKey":"sk-old"}`)
+	write("workspace.json", `{"current":"C:\\old"}`)
+	write("sessions.json", `{"sessions":[]}`)
+	write(filepath.Join("sessions", "s1.json"), `{"rows":[]}`)
+
+	migrateConfigDirFrom(oldDir, newDir)
+
+	for _, rel := range []string{"settings.json", "workspace.json", "sessions.json", filepath.Join("sessions", "s1.json")} {
+		if _, err := os.Stat(filepath.Join(newDir, rel)); err != nil {
+			t.Fatalf("%s was not migrated: %v", rel, err)
+		}
+	}
+	buf, err := os.ReadFile(filepath.Join(newDir, "settings.json"))
+	if err != nil || !strings.Contains(string(buf), "sk-old") {
+		t.Fatalf("settings not migrated: %v %s", err, buf)
+	}
+
+	// Newer files in the home directory win; the old folder stays as backup.
+	if err := os.WriteFile(filepath.Join(newDir, "settings.json"), []byte(`{"apiKey":"sk-new"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migrateConfigDirFrom(oldDir, newDir)
+	buf, _ = os.ReadFile(filepath.Join(newDir, "settings.json"))
+	if !strings.Contains(string(buf), "sk-new") {
+		t.Fatalf("migration overwrote newer settings: %s", buf)
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "settings.json")); err != nil {
+		t.Fatal("the legacy folder was removed")
+	}
+}
 
 func TestSettingsPersistenceRoundtrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")

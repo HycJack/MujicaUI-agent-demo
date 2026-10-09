@@ -41,7 +41,7 @@ Atlas 把一次编码会话摊开成三块：
 
 - git 走**真实命令**（status / diff / log / stage / unstage / commit / checkout），
   但不做 push / pull / fetch 等远端操作，也不处理合并冲突。
-- LLM 配置持久化到用户配置目录（`settings.json`）；工作区选择与全部会话/对话记录
+- LLM 配置持久化到用户家目录 `~/.mujicaui-agent-demo/`（`settings.json`）；工作区选择与全部会话/对话记录
   持久化到同目录（`workspace.json` / `sessions.json`）；"Export / Import" 等仍为
   演示性提示。
 - 工作区树对真实文件系统**只读**（列目录 + 抽屉查看 + 附加到对话）；agent 的
@@ -137,7 +137,7 @@ require (
 | `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（整条回复进一行：思考/文本增量刷新当前行，工具调用 `appendTurnTool` 进该行的卡片块，跨轮正文空行衔接）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
 | `agenttools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以工作区为根，`write_file` 自动建父目录。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
-| `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查），`settings.json` 读写与回退。 |
+| `config.go` | **配置持久化**：家目录 `~/.mujicaui-agent-demo/`、`settingsFile`/`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查）、`migrateConfigDir`（旧 `%AppData%` 存储一次性迁入家目录，不覆盖新文件）。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`wsEnsureLoaded`（Outline 行内触发）、`readCapped` 文件预览（256 KiB 上限）、`attachFile` 附加到对话、`reloadWorkspace`。 |
 | `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、会话索引 `sessions.json`（仅元数据）+ **每会话一个转录文件** `sessions/<id>.json`（懒加载、脏标记增量写）、`writeFileAtomic`（临时文件 + rename，坏 ACL 目标自愈）、旧单文件格式一次性迁移、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
@@ -471,10 +471,10 @@ Reasoning 档位）。
 把 `json.Marshal(a.llm)` 与上次落盘快照 `savedSettings` 比较，漂移即写盘
 （`saveSettingsIfChanged`）；open→closed 转变仍强制最终保存（`Done` / ✕ / 遮罩 /
 Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直接关窗口也不会丢配置**。
-文件写入用户配置目录 `MujicaUI-agent-demo/settings.json`（`Busy`/`LastError`/
+文件写入家目录 `~/.mujicaui-agent-demo/settings.json`（`Busy`/`LastError`/
 `ProviderOK`/`ConnectionErr` 标 `json:"-"` 不落盘；文件 0600、目录 0700）。
 启动时 `main.go` 调 `loadSettings()` 合并加载：文件缺失/损坏回退默认并记录快照。
-`configPath` 为空（拿不到用户配置目录）时持久化整体禁用。
+`configPath` 为空（拿不到家目录）时持久化整体禁用。
 
 ### 7.2 `threadView(c)`
 
@@ -680,12 +680,14 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 线程（`threads` 命中用缓存，否则空线程）；找不到则 `sessionID=""` +
 空线程（欢迎页）。
 
-**持久化文件**（用户配置目录 `MujicaUI-agent-demo/` 下，0600/0700，路径字段为空
-即禁用——测试不碰盘）：
+**持久化文件**（**用户家目录** `~/.mujicaui-agent-demo/` 下——Windows 即
+`C:\Users\<你>\.mujicaui-agent-demo\`，**不是** `%AppData%`，也不是 exe 所在目录；
+0600/0700，路径字段为空即禁用——测试不碰盘。旧版 `%AppData%\MujicaUI-agent-demo\`
+的数据启动时由 `migrateConfigDir` 自动迁移：不覆盖新文件，旧目录保留作备份）：
 
 | 文件 | 内容 |
 | --- | --- |
-| `settings.json` | LLM 配置（原有，不变） |
+| `settings.json` | LLM 配置（API Key 明文，0600） |
 | `workspace.json` | `{current, recents[]}` —— 当前工作区 + 最近列表（去重、上限 6，载入时当前根置顶） |
 | `sessions.json` | `{sessions:[{id,title,updated,pinned,workspace,mode,threaded}]}` —— 会话**索引**（仅元数据，不含对话内容） |
 | `sessions/<id>.json` | `{mode, rows[]}` —— **每个会话一个转录文件**（含合并的工具调用数据），打开会话时懒加载；`persistSessions` 只写索引 + 脏标记的转录（`saveSession`/`send`/流结束置脏）；旧的单文件格式（索引内嵌 rows）启动时一次性迁移到本布局，原文件保留为 `sessions.json.bak` |
@@ -875,7 +877,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   不回灌到下一轮的 LLM 历史（每轮工具上下文在循环内部完整，跨 send 丢失）。
 - 工具直接作用于真实文件系统（bash 可执行任意命令），**无审批/沙箱闸门**；
   输出 8 KiB、读文件 64 KiB 截断是仅有的护栏。
-- 配置持久化到用户配置目录 `MujicaUI-agent-demo/settings.json`（含 API Key 明文，
+- 配置持久化到家目录 `~/.mujicaui-agent-demo/settings.json`（含 API Key 明文，
   文件 0600 / 目录 0700，对话框打开期间实时写盘）；API Key 也可留空走 Provider
   的环境变量。
 - 无窗口（测试）环境 `send()` 落定占位文本，不做真实网络调用。

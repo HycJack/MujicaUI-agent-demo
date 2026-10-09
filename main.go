@@ -15,6 +15,7 @@ import (
 )
 
 func main() {
+	migrateConfigDir() // pull an old %AppData% store into the home directory once
 	a := newApp()
 	a.loadSettings() // restore the persisted LLM backend, if any
 	if p, err := sessionsFile(); err == nil {

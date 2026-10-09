@@ -35,21 +35,22 @@ func homeDir() string {
 	return ""
 }
 
-// wsPrefsFile / sessionsFile name the store files next to settings.json.
+// wsPrefsFile / sessionsFile name the store files inside the app's home
+// directory folder (~/.mujicaui-agent-demo, next to settings.json).
 func wsPrefsFile() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := configDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, configDirName, "workspace.json"), nil
+	return filepath.Join(dir, "workspace.json"), nil
 }
 
 func sessionsFile() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := configDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, configDirName, "sessions.json"), nil
+	return filepath.Join(dir, "sessions.json"), nil
 }
 
 // dirExists reports whether path is an existing directory.

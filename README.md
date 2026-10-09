@@ -49,13 +49,14 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   展开/折叠，点会话打开（属于其它工作区时自动先切换过去）；末行 "Open workspace…"
   手输入口 + `New chat` 按钮。**首跑无任何演示会话**——空树 + 欢迎页，与真实
   agent 控制台一致。
-- **数据持久化** —— 用户配置目录（Windows 为 `%AppData%\MujicaUI-agent-demo\`，
-  **不是 exe 所在目录**）下：`settings.json`（LLM 配置，含 API Key）、
-  `workspace.json`（当前工作区 + 最近列表）、`sessions.json`（会话**索引**）+
-  **每个会话一个转录文件** `sessions\<id>.json`（打开会话时懒加载，保存只写索引 +
-  有改动的转录，长对话不再互相拖累）；所有写入走**临时文件 + 原子替换**，遇到
-  坏 ACL 的旧文件自动删除重写（修复 "Access is denied"）；旧的单文件会话存储
-  启动时自动迁移，原文件保留为 `sessions.json.bak`。重启后原样恢复。
+- **数据持久化** —— 用户**家目录**下 `~/.mujicaui-agent-demo/`（Windows 即
+  `C:\Users\<你>\.mujicaui-agent-demo\`，**不是** `%AppData%`，也不是 exe 所在目录）：
+  `settings.json`（LLM 配置，含 API Key）、`workspace.json`（当前工作区 + 最近列表）、
+  `sessions.json`（会话**索引**）+ **每个会话一个转录文件** `sessions\<id>.json`
+  （打开会话时懒加载，保存只写索引 + 有改动的转录，长对话不再互相拖累）；所有写入走
+  **临时文件 + 原子替换**，遇到坏 ACL 的旧文件自动删除重写（修复 "Access is denied"）；
+  旧版存在 `%AppData%\MujicaUI-agent-demo\` 的数据启动时自动迁移（不覆盖新文件，
+  旧目录保留作备份）。重启后原样恢复。
 - **文件附加到对话** —— **在目录树的文件上右键 → "Add to conversation"**（菜单里
   还有 "Open in viewer" / "Copy path"），或用代码抽屉 / 变更列表的按钮把文件加入
   输入框上方的上下文 chips；发送时文件内容自动折叠进 LLM 消息（单文件 64 KiB 上限，
@@ -85,10 +86,10 @@ go run .
 ```
 
 启动后在标题栏点 **Provider settings** 图标（或 ⌘K → `Providers`）填入你的
-API key 即可开始对话；配置在对话框打开期间**实时保存**到用户配置目录
-（Windows 为 `%AppData%\MujicaUI-agent-demo\` 下的 `settings.json`、
-`workspace.json` 与会话存储 `sessions.json` + `sessions\`），下次启动自动恢复
-工作区、会话与全部对话。
+API key 即可开始对话；配置在对话框打开期间**实时保存**到用户家目录
+（`~/.mujicaui-agent-demo/`，Windows 即 `C:\Users\<你>\.mujicaui-agent-demo\` 下的
+`settings.json`、`workspace.json` 与会话存储 `sessions.json` + `sessions\`），
+下次启动自动恢复工作区、会话与全部对话。
 
 ## Build 构建
 
