@@ -7,41 +7,13 @@ package app
 // headless (tests) they resolve synchronously.
 
 import (
-	"bytes"
-	"encoding/json"
-	"go/format"
-	"io"
-	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
+	"crux-agent/internal/fsutil"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/egoist/mygo/ui"
 )
-
-// wsIgnore lists directory entries the tree skips: VCS internals, build
-// and dependency directories — the noise mainstream agents hide too.
-var wsIgnore = map[string]bool{
-	".git": true, ".gocache": true, ".gopath": true, ".mygo": true,
-	".venv": true, "venv": true, "node_modules": true, "__pycache__": true,
-	"dist": true, "build": true, "target": true,
-	".DS_Store": true, "desktop.ini": true,
-}
-
-// wsReadCap caps a previewed file's size; larger files load truncated.
-const wsReadCap = 256 << 10 // 256 KiB
-
-// wsAttachCap caps one attached file's content folded into a message.
-const wsAttachCap = 64 << 10 // 64 KiB
-
-// wsEntry is one child of a listed directory.
-type wsEntry struct {
-	path string
-	name string
-	dir  bool
-}
 
 // wsNode is what the tree knows about one path.
 type wsNode struct {
@@ -50,6 +22,9 @@ type wsNode struct {
 	status data.DataStatus
 	err    string
 }
+
+// wsEntry is one child of a listed directory.
+type wsEntry = fsutil.Entry
 
 // workspace is the lazily-listed file tree under the workspace root;
 // outline is ui.Outline's open/selection state — the rows are custom-built
@@ -80,29 +55,6 @@ func (w *workspace) reset() {
 	}
 }
 
-// listDir reads one directory's entries: folders first, then files, each
-// case-insensitively named, noise directories skipped.
-func listDir(dir string) ([]wsEntry, error) {
-	reads, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]wsEntry, 0, len(reads))
-	for _, e := range reads {
-		if wsIgnore[e.Name()] {
-			continue
-		}
-		out = append(out, wsEntry{path: filepath.Join(dir, e.Name()), name: e.Name(), dir: e.IsDir()})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].dir != out[j].dir {
-			return out[i].dir
-		}
-		return strings.ToLower(out[i].name) < strings.ToLower(out[j].name)
-	})
-	return out, nil
-}
-
 // wsRoots is the tree's root list: the workspace directory, or nothing.
 func wsRoots(w workspace) []string {
 	if w.root == "" {
@@ -128,7 +80,7 @@ func (a *app) wsChildren(path string) []string {
 	}
 	out := make([]string, len(n.kids))
 	for i, e := range n.kids {
-		out[i] = e.path
+		out[i] = e.Path
 	}
 	return out
 }
@@ -162,12 +114,12 @@ func (a *app) loadWsDir(path string) {
 	n.status = data.DataLoading
 	a.ws.nodes[path] = n
 	if a.redraw == nil {
-		kids, err := listDir(path)
+		kids, err := fsutil.ListDir(path)
 		a.applyWsDir(path, kids, err)
 		return
 	}
 	go func() {
-		kids, err := listDir(path)
+		kids, err := fsutil.ListDir(path)
 		a.redraw(func() { a.applyWsDir(path, kids, err) })
 	}()
 }
@@ -183,9 +135,9 @@ func (a *app) applyWsDir(path string, kids []wsEntry, err error) {
 	}
 	n.status, n.err, n.kids = data.DataReady, "", kids
 	for _, e := range kids {
-		if e.dir {
-			if _, seen := a.ws.nodes[e.path]; !seen {
-				a.ws.nodes[e.path] = wsNode{dir: true, status: data.DataUnloaded}
+		if e.Dir {
+			if _, seen := a.ws.nodes[e.Path]; !seen {
+				a.ws.nodes[e.Path] = wsNode{dir: true, status: data.DataUnloaded}
 			}
 		}
 	}
@@ -238,90 +190,4 @@ func (a *app) attachFile(path string) string {
 func (a *app) reloadWorkspace() {
 	a.ws.reset()
 	a.fdraw = fileDrawer{}
-}
-
-// readCapped reads up to limit bytes of a file and reports whether it was
-// truncated.
-func readCapped(path string, limit int64) (string, bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", false, err
-	}
-	defer f.Close()
-	buf := make([]byte, limit)
-	n, err := io.ReadFull(f, buf)
-	if err == nil {
-		// The buffer filled: one more byte means there was more to read.
-		var probe [1]byte
-		switch m, perr := f.Read(probe[:]); {
-		case m > 0:
-			return string(buf), true, nil
-		case perr == nil || perr == io.EOF:
-			return string(buf), false, nil
-		default:
-			return "", false, perr
-		}
-	}
-	if err == io.ErrUnexpectedEOF || err == io.EOF {
-		return string(buf[:n]), false, nil
-	}
-	return "", false, err
-}
-
-// previewLang maps a file extension to a code-viewer highlighting language
-// (go, javascript/typescript, python, json, shell, sql); unknown
-// extensions render plain.
-func previewLang(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go":
-		return "go"
-	case ".sh", ".bash", ".zsh":
-		return "shell"
-	case ".js", ".mjs", ".cjs", ".jsx":
-		return "javascript"
-	case ".ts", ".tsx":
-		return "typescript"
-	case ".py":
-		return "python"
-	case ".json":
-		return "json"
-	case ".sql":
-		return "sql"
-	}
-	return ""
-}
-
-// formattable reports whether the language has an in-process formatter.
-func formattable(lang string) bool {
-	return lang == "go" || lang == "json"
-}
-
-// formatSource renders a formatted copy of text for the languages Crux can
-// format in-process — gofmt for Go, two-space pretty-print for JSON. ok is
-// false for other languages or when the source does not parse (the caller
-// then shows the raw text).
-func formatSource(lang, text string) (string, bool) {
-	switch lang {
-	case "go":
-		out, err := format.Source([]byte(text))
-		if err != nil {
-			return "", false
-		}
-		return string(out), true
-	case "json":
-		var buf bytes.Buffer
-		if err := json.Indent(&buf, []byte(text), "", "  "); err != nil {
-			return "", false
-		}
-		return buf.String(), true
-	}
-	return "", false
-}
-
-// workspaceName is the status bar's short workspace label.
-func workspaceName(root string) string {
-	if root == "" {
-		return "no workspace"
-	}
-	return filepath.Base(root)
 }

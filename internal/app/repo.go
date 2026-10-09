@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"crux-agent/internal/fsutil"
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
 	"github.com/ZacharyZhang-NY/MujicaUI/core"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
@@ -174,7 +175,7 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 		ui.Text(c, "Working tree clean — nothing to review").FontSize(11).TextColor(kTextMuted(c))
 		return
 	}
-	lang := previewLang(f.Path)
+	lang := fsutil.PreviewLang(f.Path)
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		git.GitStatusBadge(c, f.Status, git.GitStatusBadgeOptions{})
 		ui.Text(c, f.Path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
@@ -189,7 +190,7 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 	})
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
-		if a.repo.codeTab == 1 && formattable(lang) {
+		if a.repo.codeTab == 1 && fsutil.Formattable(lang) {
 			ui.Segmented(c, &a.repo.srcFmt.tab, "Raw", "Fmt").Width(108)
 		}
 	})

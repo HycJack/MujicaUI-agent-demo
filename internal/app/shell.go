@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"crux-agent/internal/fsutil"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
@@ -170,7 +171,7 @@ func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
 		}
 		row.Children(func() {
 			ui.Icon(c, icons.Must("folder")).FontSize(14)
-			ui.Text(c, workspaceName(path)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0)
+			ui.Text(c, fsutil.WorkspaceName(path)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0)
 			if count > 0 {
 				ui.Text(c, strconv.Itoa(count)).FontSize(10).TextColor(k.TextMuted)
 			}
@@ -233,7 +234,7 @@ func (a *app) content(c *ui.Context, k tokensT) {
 func (a *app) statusbar(c *ui.Context, k tokensT) {
 	layout.StatusBar(c, layout.StatusBarOptions{
 		Left: []layout.StatusItem{
-			{ID: "workspace", Text: workspaceName(a.ws.root), Icon: icons.Must("folder")},
+			{ID: "workspace", Text: fsutil.WorkspaceName(a.ws.root), Icon: icons.Must("folder")},
 			{ID: "branch", Text: a.repo.branch, Icon: icons.Must("git-branch")},
 			{ID: "mode", Text: modeName(a.thread.mode), Icon: icons.Must("brain")},
 			{ID: "ctx", Text: "6.4k / 8k tokens", Icon: icons.Must("sliders-horizontal")},

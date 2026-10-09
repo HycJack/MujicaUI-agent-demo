@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"crux-agent/internal/engine"
+	"crux-agent/internal/fsutil"
 	"crux-agent/internal/store"
 	"github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
@@ -117,7 +118,7 @@ func (f *fmtView) render(lang, text string) []string {
 	}
 	key := lang + "\x00" + text
 	if f.key != key {
-		if out, ok := formatSource(lang, text); ok {
+		if out, ok := fsutil.FormatSource(lang, text); ok {
 			f.key, f.lines = key, splitLines(out)
 		} else {
 			f.key, f.lines = key, splitLines(text)

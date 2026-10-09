@@ -11,38 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"crux-agent/internal/fsutil"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/egoist/mygo/ui"
 )
-
-func TestListDir(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"sub", ".git", "node_modules"} {
-		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{"b.txt", "a.txt", "Z.go"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	entries, err := listDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, e := range entries {
-		got = append(got, e.name)
-	}
-	want := []string{"sub", "a.txt", "b.txt", "Z.go"} // folders first, then case-insensitive names
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("listDir order %v, want %v", got, want)
-	}
-	if !entries[0].dir {
-		t.Fatal("the folder entry is not marked as a directory")
-	}
-}
 
 func TestWorkspaceLazyLoad(t *testing.T) {
 	root := t.TempDir()
@@ -121,11 +93,11 @@ func TestWorkspacePreview(t *testing.T) {
 		t.Fatalf(".go maps to %q, want go", a.fdraw.lang)
 	}
 	big := filepath.Join(root, "big.txt")
-	if err := os.WriteFile(big, []byte(strings.Repeat("x", int(wsReadCap)+10)), 0o644); err != nil {
+	if err := os.WriteFile(big, []byte(strings.Repeat("x", int(fsutil.ReadCap)+10)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	a.openFileDrawer(big)
-	if !a.fdraw.truncated || len(a.fdraw.text) != int(wsReadCap) {
+	if !a.fdraw.truncated || len(a.fdraw.text) != int(fsutil.ReadCap) {
 		t.Fatalf("truncation wrong: trunc=%v len=%d", a.fdraw.truncated, len(a.fdraw.text))
 	}
 	// A missing file reports its error instead of panicking.
@@ -185,29 +157,6 @@ func TestWorkspaceCommands(t *testing.T) {
 	}
 }
 
-// formatSource formats Go with gofmt and pretty-prints JSON in-process;
-// other languages (or unparsable sources) report not-formattable.
-func TestFormatSource(t *testing.T) {
-	raw := "package main\nfunc main(){\nx:=1\n_ = x\n}\n"
-	out, ok := formatSource("go", raw)
-	if !ok || !strings.Contains(out, "x := 1") {
-		t.Fatalf("gofmt view wrong: ok=%v out=%q", ok, out)
-	}
-	if _, ok := formatSource("go", "not go at all"); ok {
-		t.Fatal("unparsable go should not format")
-	}
-	out, ok = formatSource("json", `{"a":1,"b":[2,3]}`)
-	if !ok || !strings.Contains(out, "\n  \"a\": 1") {
-		t.Fatalf("json view wrong: %q", out)
-	}
-	if _, ok := formatSource("shell", "echo hi"); ok {
-		t.Fatal("shell should not be formattable")
-	}
-	if !formattable("go") || !formattable("json") || formattable("python") {
-		t.Fatal("formattable set wrong")
-	}
-}
-
 // fmtView renders raw until toggled, then serves the cached formatted copy
 // and recomputes when the content changes.
 func TestFmtViewToggle(t *testing.T) {
@@ -241,7 +190,7 @@ func TestPreviewFormatToggle(t *testing.T) {
 	a := newApp()
 	a.ws = newWorkspace(dir)
 	a.openFileDrawer(filepath.Join(dir, "main.go"))
-	if !formattable(a.fdraw.lang) {
+	if !fsutil.Formattable(a.fdraw.lang) {
 		t.Fatalf("drawer lang %q, want go", a.fdraw.lang)
 	}
 	if ui.Render(a.view, 1280, 820, 1) == nil {

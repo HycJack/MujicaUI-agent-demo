@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"crux-agent/internal/engine"
+	"crux-agent/internal/fsutil"
 	muiagent "github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 )
@@ -109,7 +110,7 @@ func (a *app) attachedFilesBlock() (names, block string) {
 		}
 		rel := strings.TrimPrefix(it.ID, "file:")
 		list = append(list, "`"+rel+"`")
-		content, truncated, err := readCapped(filepath.Join(a.ws.root, filepath.FromSlash(rel)), wsAttachCap)
+		content, truncated, err := fsutil.ReadCapped(filepath.Join(a.ws.root, filepath.FromSlash(rel)), fsutil.AttachCap)
 		sb.WriteString("\n\n--- " + rel + " ---\n")
 		switch {
 		case err != nil:

@@ -13,11 +13,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"slices"
-	"sort"
 	"strings"
-	"time"
 
 	"crux-agent/internal/engine"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
@@ -371,7 +368,7 @@ func (a *app) fetchModels() {
 	a.provView.fetching = true
 	a.provView.fetchErr = ""
 	go func() {
-		ids, err := fetchOpenAIModels(base, key)
+		ids, err := engine.FetchOpenAIModels(base, key)
 		a.redraw(func() {
 			a.provView.fetching = false
 			if err != nil {
@@ -384,43 +381,6 @@ func (a *app) fetchModels() {
 			}
 		})
 	}()
-}
-
-// fetchOpenAIModels calls GET {base}/models and returns the model ids, sorted.
-func fetchOpenAIModels(base, key string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	if key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	var out struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0, len(out.Data))
-	for _, d := range out.Data {
-		if d.ID != "" {
-			ids = append(ids, d.ID)
-		}
-	}
-	sort.Strings(ids)
-	return ids, nil
 }
 
 func (a *app) rebindModel() {

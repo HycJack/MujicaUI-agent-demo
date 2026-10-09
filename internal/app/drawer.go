@@ -8,6 +8,8 @@ package app
 // window instead of a grow.
 
 import (
+	"crux-agent/internal/fsutil"
+
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
 	"github.com/ZacharyZhang-NY/MujicaUI/git"
 	"github.com/ZacharyZhang-NY/MujicaUI/overlay"
@@ -19,19 +21,19 @@ import (
 func (a *app) openFileDrawer(path string) {
 	d := &a.fdraw
 	d.title = relToRoot(a.ws.root, path)
-	d.lang = previewLang(path)
+	d.lang = fsutil.PreviewLang(path)
 	d.diffMode = false
 	d.fmt = fmtView{}
 	d.text, d.err = "", ""
 	d.truncated, d.loading = false, true
 	d.open = true
 	if a.redraw == nil {
-		text, truncated, err := readCapped(path, wsReadCap)
+		text, truncated, err := fsutil.ReadCapped(path, fsutil.ReadCap)
 		a.applyFileDrawer(text, truncated, err)
 		return
 	}
 	go func() {
-		text, truncated, err := readCapped(path, wsReadCap)
+		text, truncated, err := fsutil.ReadCapped(path, fsutil.ReadCap)
 		a.redraw(func() { a.applyFileDrawer(text, truncated, err) })
 	}()
 }
@@ -98,7 +100,7 @@ func (a *app) fileDrawerBody(c *ui.Context) {
 				ui.Text(c, "truncated at 256 KiB").FontSize(10).TextColor(k.TextMuted)
 			}
 			ui.Text(c, "").Grow(1)
-			if !d.diffMode && formattable(d.lang) {
+			if !d.diffMode && fsutil.Formattable(d.lang) {
 				ui.Segmented(c, &d.fmt.tab, "Raw", "Fmt").Width(108)
 			}
 			if !d.diffMode {
