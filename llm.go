@@ -147,6 +147,7 @@ func (a *app) send() {
 		row{id: fmt.Sprintf("a%d", userIdx+1), role: chat.MessageAssistant, kind: rowReasoned, at: now.Add(time.Millisecond)})
 	a.thread.draft = ""
 	a.thread.list.ScrollToEnd()
+	a.persistSessions()
 	a.startStream(userIdx)
 }
 
@@ -259,6 +260,7 @@ func (a *app) applyReply(idx int, think, text string) {
 	r.text = text
 	r.thinkText = think
 	a.llm.LastError = ""
+	a.persistSessions()
 }
 
 // streamOptions builds the streaming options from the app settings.
@@ -291,6 +293,7 @@ func (a *app) streamError(idx int, err error) {
 			r.kind = rowPlain
 		}
 		a.thread.list.ScrollToEnd()
+		a.persistSessions()
 	}
 	if a.redraw == nil {
 		set()

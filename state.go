@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"time"
 
 	piai "github.com/HycJack/pi-ai-go"
@@ -83,12 +82,14 @@ func seeded() thread {
 	}
 }
 
-// session is one item of the sessions list.
+// session is one item of the sessions list; ws is the workspace
+// (absolute directory) the session belongs to.
 type session struct {
 	id      string
 	title   string
 	updated time.Time
 	pinned  bool
+	ws      string
 }
 
 // seededFor returns the transcript a session opens with; unknown ids
@@ -189,6 +190,8 @@ type app struct {
 	// llm
 	llm          LLMSettings
 	configPath   string             // settings.json path; empty disables persistence
+	sessionsPath string             // sessions.json path; empty disables persistence
+	wsPrefsPath  string             // workspace.json path; empty disables persistence
 	settingsOpen bool               // the merged Settings dialog is open
 	settingsTab  string             // which pane: "providers" or "agent"
 	redraw       func(func())       // runs a closure on the UI thread + repaints (win.Update); nil in tests
@@ -196,6 +199,11 @@ type app struct {
 	provView     providerView       // providers config pane state
 	agentView    agentView          // agent config pane state
 	maxTokField  string             // mirrors llm.MaxTokens for the Agent form
+
+	// workspace
+	recents      []string // recently opened workspaces, newest first
+	wsDialogOpen bool     // the Open-workspace dialog
+	wsPathField  string   // the dialog's directory input
 
 	// shell
 	navOpen     bool
@@ -206,8 +214,6 @@ type app struct {
 func newApp() *app {
 	a := &app{
 		sessionID:   "c9",
-		sessions:    seedSessions(),
-		threads:     map[string]thread{},
 		navOpen:     true,
 		repo:        repo{branch: "main"},
 		conv:        chat.ChatConversation{ID: "c9", Title: "Nightly export postmortem", Updated: time.Now().Add(-2 * time.Hour)},
@@ -217,21 +223,21 @@ func newApp() *app {
 	if p, err := settingsFile(); err == nil {
 		a.configPath = p
 	}
-	// The workspace is the directory the app runs from; when it cannot be
-	// resolved the tree shows its empty state.
-	if wd, err := os.Getwd(); err == nil {
-		a.ws = newWorkspace(wd)
-	} else {
-		a.ws = newWorkspace("")
-	}
+	// The workspace defaults to the user's home directory — never the
+	// directory the binary was launched from. main.go replaces it with the
+	// persisted choice and wires the store paths (tests keep no paths, so
+	// they never touch disk).
+	a.ws = newWorkspace(homeDir())
+	a.sessions = seedSessions(a.ws.root)
+	a.threads = map[string]thread{}
 	a.provView = defaultProviderView()
 	a.agentView = defaultAgentView()
 	a.thread = seededFor("c9")
 	return a
 }
 
-// closeModals closes the Settings dialog.
-func (a *app) closeModals() { a.settingsOpen = false }
+// closeModals closes the Settings and workspace dialogs.
+func (a *app) closeModals() { a.settingsOpen, a.wsDialogOpen = false, false }
 
 // openProviders opens the Settings dialog on the Providers pane.
 func (a *app) openProviders() { a.settingsTab, a.settingsOpen = "providers", true }
@@ -239,12 +245,13 @@ func (a *app) openProviders() { a.settingsTab, a.settingsOpen = "providers", tru
 // openAgent opens the Settings dialog on the Agent pane.
 func (a *app) openAgent() { a.settingsTab, a.settingsOpen = "agent", true }
 
-// seedSessions returns a stable, mutable session index (newest first).
-func seedSessions() []session {
+// seedSessions returns the first-run demo index (newest first), bound to
+// the given workspace.
+func seedSessions(ws string) []session {
 	now := time.Now()
 	return []session{
-		{id: "c9", title: "Nightly export postmortem", updated: now.Add(-2 * time.Hour)},
-		{id: "c4", title: "Archive retention policy", updated: now.Add(-26 * time.Hour)},
-		{id: "c1", title: "Seating chart macro", updated: now.Add(-40 * 24 * time.Hour), pinned: true},
+		{id: "c9", title: "Nightly export postmortem", updated: now.Add(-2 * time.Hour), ws: ws},
+		{id: "c4", title: "Archive retention policy", updated: now.Add(-26 * time.Hour), ws: ws},
+		{id: "c1", title: "Seating chart macro", updated: now.Add(-40 * 24 * time.Hour), pinned: true, ws: ws},
 	}
 }

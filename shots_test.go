@@ -45,6 +45,9 @@ func TestScreenshots(t *testing.T) {
 	shot("chat-conversation", newApp()) // the seeded "nightly export" thread
 
 	wk := newApp()
+	if wd, err := os.Getwd(); err == nil {
+		wk.ws = newWorkspace(wd) // browse the app's own directory for the shot
+	}
 	wk.runCommand("workspace")
 	wk.ws.tree.SetOpen(wk.ws.root, true)
 	wk.loadWsDir(wk.ws.root) // headless: lists synchronously

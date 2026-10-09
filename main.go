@@ -17,6 +17,19 @@ import (
 func main() {
 	a := newApp()
 	a.loadSettings() // restore the persisted LLM backend, if any
+	if p, err := sessionsFile(); err == nil {
+		a.sessionsPath = p
+	}
+	if p, err := wsPrefsFile(); err == nil {
+		a.wsPrefsPath = p
+	}
+	a.loadWsPrefs() // restore the last workspace (default: the home directory)
+	a.loadSessions()
+	if len(a.sessions) == 0 {
+		a.sessions = seedSessions(a.ws.root)
+		a.persistSessions()
+	}
+	a.restoreSession()
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "Atlas — coding agent",

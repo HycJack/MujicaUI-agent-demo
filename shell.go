@@ -36,6 +36,7 @@ func (a *app) view(c *ui.Context) {
 		a.statusbar(c, k)
 	})
 	a.settingsDialogs(c)
+	a.workspaceDialog(c)
 	a.shortcuts(c)
 	a.palette(c)
 }
@@ -80,10 +81,17 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 	})
 }
 
-// sidebar is the conversation index: a New-chat button over the list of
-// sessions.
+// sidebar is the conversation index: a workspace switcher over a New-chat
+// button and the list of the current workspace's sessions.
 func (a *app) sidebar(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(260).Shrink(0).Background(k.Surface).Padding(10, 10, 10).Gap(8).Children(func() {
+		// Sessions are organized per workspace, the way Codex-style agents
+		// group a project's threads; the picker re-roots everything.
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.Accent)
+			ui.Text(c, workspaceName(a.ws.root)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(a.ws.root)
+			a.iconToggle(c, k, "chevron-down", "Change workspace", a.openWsDialog)
+		})
 		newBtn := ui.PrimaryButton(c, "New chat")
 		if newBtn.Clicked() {
 			a.newThread()
@@ -91,6 +99,9 @@ func (a *app) sidebar(c *ui.Context, k tokensT) {
 		ui.Text(c, "Sessions").FontSize(11).TextColor(k.TextMuted)
 		items := make([]chat.ChatConversation, 0, len(a.sessions))
 		for _, s := range a.sessions {
+			if s.ws != a.ws.root {
+				continue // each workspace keeps its own sessions
+			}
 			items = append(items, chat.ChatConversation{ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned})
 		}
 		conv := chat.ConversationList(c, &a.convList, items, chat.ConversationListOptions{Label: "Sessions"}, nil)
@@ -162,8 +173,9 @@ func (a *app) newThread() {
 	a.sessionID = fmt.Sprintf("new-%d", a.nextID)
 	a.convList.Selected = a.sessionID
 	a.thread = thread{mode: chat.ModeAgent, model: a.thread.model}
-	a.sessions = append([]session{{id: a.sessionID, title: "New chat " + strconv.Itoa(a.nextID), updated: time.Now()}}, a.sessions...)
+	a.sessions = append([]session{{id: a.sessionID, title: "New chat " + strconv.Itoa(a.nextID), updated: time.Now(), ws: a.ws.root}}, a.sessions...)
 	a.closeModals()
+	a.persistSessions()
 }
 
 // openSession saves the working transcript and loads the chosen one,
@@ -181,6 +193,7 @@ func (a *app) openSession(id string) {
 		return
 	}
 	a.thread = seededFor(id)
+	a.persistSessions()
 }
 
 // saveSession stashes the working transcript under its session id so

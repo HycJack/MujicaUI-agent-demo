@@ -34,9 +34,16 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   全部由 MyGo 弹性布局原语拼装，标题栏与状态栏齐备。
 - **真实 LLM 流式对话** —— pi-ai-go 统一多模型 SDK：流式正文、思维链、工具调用卡、
   多文件 Diff 评审；无窗口（测试）环境下同步落定占位回复，保持确定性。
-- **Workspace 工作区树** —— 右栏 Workspace 标签浏览**真实目录**（启动目录为根）：
-  懒加载展开、目录优先排序、跳过 `.git` / `node_modules` 等噪音；点选文件在下方
-  预览源码（256 KiB 上限，按扩展名高亮），一键附加到对话或刷新；状态栏显示工作区名。
+- **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录），可随时
+  切换到任意目录：右栏 Workspace 标签浏览真实目录（懒加载展开、目录优先排序、
+  跳过 `.git` / `node_modules` 等噪音）；点选文件在下方预览源码（256 KiB 上限，
+  按扩展名高亮），一键附加到对话或刷新；状态栏显示工作区名。
+- **会话按工作区组织** —— 侧栏顶部显示当前工作区并可一键打开切换对话框
+  （最近目录 + 手输路径，⌘K `Open workspace…`）；每个工作区有独立的会话列表，
+  切换工作区即切换会话上下文，树 / git 面板随之重根。
+- **数据持久化** —— 用户配置目录下三个 JSON：`settings.json`（LLM 配置，含
+  API Key）、`workspace.json`（当前工作区 + 最近列表）、`sessions.json`
+  （**所有工作区的会话与完整对话记录**），重启后原样恢复。
 - **文件附加到对话** —— 预览区、变更列表或 `plus` 按钮把文件加入输入框上方的
   上下文 chips；发送时文件内容自动折叠进 LLM 消息（单文件 64 KiB 上限，去重、可移除）。
 - **Repository 真实 git 版本管理** —— 直接管理工作区的 git 仓库：分支切换/新建、
@@ -47,7 +54,8 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   兼容端点与在线拉取模型列表）与 Agent（系统提示 / 推理层级 / 温度 / 限额）两个分区，
   值即时生效并持久化到本地（用户配置目录下的 `settings.json`，含 API Key，文件权限 0600），
   对话框高度固定、切换分区不跳动。
-- **⌘K 命令面板** —— 新建会话、导出、折叠面板、工作区树、切换 Diff / 源码等 9 条命令。
+- **⌘K 命令面板** —— 新建会话、导出、折叠面板、工作区树、打开工作区、切换
+  Diff / 源码等 10 条命令。
 - **消息操作** —— 复制到剪贴板、重新生成、消息反馈。
 - **主题走令牌** —— 全部颜色经 MujicaUI `core.Tokens` 语义令牌，亮暗主题跟随系统。
 
@@ -61,7 +69,8 @@ go run .
 
 启动后在标题栏点 **Provider settings** 图标（或 ⌘K → `Providers`）填入你的
 API key 即可开始对话；配置在对话框关闭时自动保存到用户配置目录
-（Windows 为 `%AppData%\MujicaUI-agent-demo\settings.json`），下次启动自动加载。
+（Windows 为 `%AppData%\MujicaUI-agent-demo\` 下的 `settings.json`、
+`workspace.json`、`sessions.json`），下次启动自动恢复工作区、会话与全部对话。
 
 ## Build 构建
 
@@ -95,6 +104,7 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 | `settings.go` | Settings 模态框：Providers / Agent 两个分区 |
 | `config.go` | 配置持久化：`settings.json` 的加载与保存 |
 | `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 文件预览 + 附加到对话 |
+| `wsstore.go` | 工作区存储：默认主目录、目录切换对话框、`workspace.json` / `sessions.json` 持久化 |
 | `vcs.go` | 真实 git 后端：status / branch / log 解析、stage / unstage / commit / checkout |
 | `repo.go` | 右栏检视器：Workspace 树 / Repository（真实分支、变更、提交、Diff / 源码） |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips |

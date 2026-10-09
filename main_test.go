@@ -100,12 +100,16 @@ func TestSessionSwitch(t *testing.T) {
 // move the panels they name.
 func TestPaletteCommands(t *testing.T) {
 	a := newApp()
-	for _, id := range []string{"new", "export", "toggle-nav", "toggle-repo", "providers", "agent", "workspace", "reload-workspace", "diff", "source", "branch"} {
+	for _, id := range []string{"new", "export", "toggle-nav", "toggle-repo", "providers", "agent", "workspace", "workspace-open", "reload-workspace", "diff", "source", "branch"} {
 		a.runCommand(id)
 		if ui.Render(a.view, 1280, 820, 1) == nil {
 			t.Fatalf("render nil after command %q", id)
 		}
 	}
+	if !a.wsDialogOpen {
+		t.Fatal("workspace-open should open the workspace picker")
+	}
+	a.closeModals()
 	a.runCommand("providers")
 	if !a.settingsOpen || a.settingsTab != "providers" {
 		t.Fatal("providers command should open settings on the providers pane")
