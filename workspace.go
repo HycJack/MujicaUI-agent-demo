@@ -18,6 +18,7 @@ import (
 
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
+	"github.com/egoist/mygo/ui"
 )
 
 // wsIgnore lists directory entries the tree skips: VCS internals, build
@@ -50,12 +51,14 @@ type wsNode struct {
 	err    string
 }
 
-// workspace is the lazily-listed file tree under the workspace root; tree
-// is data.Tree's open/selection state.
+// workspace is the lazily-listed file tree under the workspace root;
+// outline is ui.Outline's open/selection state — the rows are custom-built
+// (icon, listing status, right-click menu), so the tree is a plain Outline
+// rather than data.Tree.
 type workspace struct {
-	root  string
-	nodes map[string]wsNode
-	tree  data.TreeState[string]
+	root    string
+	nodes   map[string]wsNode
+	outline ui.OutlineState[string]
 }
 
 // newWorkspace roots the tree at dir; the root itself lists on first open.
@@ -71,7 +74,7 @@ func newWorkspace(dir string) workspace {
 // re-reads the disk on next open.
 func (w *workspace) reset() {
 	w.nodes = map[string]wsNode{}
-	w.tree = data.TreeState[string]{}
+	w.outline = ui.OutlineState[string]{}
 	if w.root != "" {
 		w.nodes[w.root] = wsNode{dir: true, status: data.DataUnloaded}
 	}
@@ -139,6 +142,16 @@ func (a *app) wsItemStatus(path string) data.DataStatus {
 	return n.status
 }
 
+// wsEnsureLoaded asks an open, never-listed directory for its listing —
+// the Outline equivalent of data.Tree's Load hook. loadWsDir flips the
+// status to Loading synchronously, so this asks at most once per listing.
+func (a *app) wsEnsureLoaded(path string) {
+	n, ok := a.ws.nodes[path]
+	if ok && n.dir && n.status == data.DataUnloaded && a.ws.outline.Open.Has(path) {
+		a.loadWsDir(path)
+	}
+}
+
 // loadWsDir marks a directory loading and lists it — off the UI thread
 // when a window is up, synchronously headless so tests stay deterministic.
 func (a *app) loadWsDir(path string) {
@@ -185,7 +198,11 @@ func (a *app) applyWsDir(path string, kids []wsEntry, err error) {
 func (a *app) selectWsNode(path string, submitted bool) {
 	if n, ok := a.ws.nodes[path]; ok && n.dir {
 		if submitted {
-			a.ws.tree.SetOpen(path, !a.ws.tree.IsOpen(path))
+			if a.ws.outline.Open.Has(path) {
+				a.ws.outline.Open.Remove(path)
+			} else {
+				a.ws.outline.Open.Add(path)
+			}
 		}
 		return
 	}

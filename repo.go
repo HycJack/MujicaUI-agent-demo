@@ -5,9 +5,11 @@ package main
 // git repository — branch, staged/unstaged changes, commit, history, diff.
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
+	"github.com/ZacharyZhang-NY/MujicaUI/core"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/ZacharyZhang-NY/MujicaUI/git"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
@@ -29,31 +31,75 @@ func (a *app) repoPane(c *ui.Context, k tokensT) {
 }
 
 // workspacePane is the Workspace tab: the real directory tree, filling the
-// pane; picking a file opens it in the large code drawer.
+// pane; picking a file opens it in the large code drawer, right-clicking a
+// file offers attach / viewer / copy-path.
 func (a *app) workspacePane(c *ui.Context, k tokensT) {
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
 		ui.Text(c, a.ws.root).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(a.ws.root)
 		a.iconToggle(c, k, "refresh-cw", "Reload workspace", a.reloadWorkspace)
 	})
-	tree := data.Tree(c, &a.ws.tree, data.TreeOptions[string]{
-		Roots:      wsRoots(a.ws),
-		Children:   a.wsChildren,
-		Label:      wsLabel,
-		ItemStatus: a.wsItemStatus,
-		Load:       a.loadWsDir,
-		Empty:      "No workspace directory",
+	restore := data.DataSelectTheme(c, 0)
+	a.ws.outline.List.Selected = &a.wsCursor // clicks register a choice
+	e := ui.Outline(c, &a.ws.outline, wsRoots(a.ws), a.wsChildren, func(path string) {
+		a.wsTreeRow(c, k, path)
 	})
-	tree.Element.Grow(1).MinHeight(0)
-	if tree.Changed() {
-		if path, ok := a.ws.tree.Selected(); ok {
-			a.selectWsNode(path, false)
+	restore()
+	e.Grow(1).MinHeight(0)
+	if e.Changed() {
+		if i := a.ws.outline.List.Selected; i != nil && *i >= 0 && *i < a.ws.outline.Rows() {
+			a.selectWsNode(a.ws.outline.Item(*i), false)
 		}
 	}
-	if tree.Submitted() {
-		if path, ok := a.ws.tree.Selected(); ok {
-			a.selectWsNode(path, true)
+	if e.Submitted() {
+		if i := a.ws.outline.List.Selected; i != nil && *i >= 0 && *i < a.ws.outline.Rows() {
+			a.selectWsNode(a.ws.outline.Item(*i), true)
 		}
+	}
+}
+
+// wsTreeRow builds one directory-tree row: icon, name, listing status, and
+// — on files — a right-click menu (attach to the conversation, open in the
+// viewer, copy the path). Open unloaded directories ask for their listing.
+func (a *app) wsTreeRow(c *ui.Context, k tokensT, path string) {
+	n, isNode := a.ws.nodes[path]
+	isDir := isNode && n.dir
+	a.wsEnsureLoaded(path)
+	row := ui.Row(c).Label("tree:" + path).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Tooltip(path)
+	row.Children(func() {
+		icon := "file"
+		if isDir {
+			icon = "folder"
+		} else if strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".js") ||
+			strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".json") ||
+			strings.HasSuffix(path, ".py") || strings.HasSuffix(path, ".sql") ||
+			strings.HasSuffix(path, ".sh") {
+			icon = "file-code"
+		}
+		ui.Icon(c, icons.Must(icon)).FontSize(14).TextColor(k.TextMuted)
+		ui.Text(c, filepath.Base(path)).SingleLine().Grow(1).MinWidth(0)
+		switch {
+		case isDir && n.status == data.DataLoading:
+			core.Spinner(c, core.SpinnerOptions{Size: 13})
+		case isDir && n.status == data.DataFailed:
+			ui.Icon(c, icons.Must("circle-alert")).FontSize(13).TextColor(k.Danger)
+		}
+	})
+	if !isDir {
+		// Right-click a file: the attach entry point lives where the file is.
+		row.ContextMenu(func(m *ui.Menu) {
+			if m.Item("Add to conversation").Chosen() {
+				c.Toast(a.attachFile(path))
+			}
+			if m.Item("Open in viewer").Chosen() {
+				a.openFileDrawer(path)
+			}
+			m.Separator()
+			if m.Item("Copy path").Chosen() {
+				c.WriteClipboard(path)
+				c.Toast("Path copied")
+			}
+		})
 	}
 }
 

@@ -132,18 +132,18 @@ require (
 | --- | --- |
 | `main.go` | 入口：`newApp()`、`loadSettings()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
 | `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText` 与 `tool *toolRun`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
-| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口）、工作区列表为主体的会话栏、工作区、状态栏；快捷键；会话切换。 |
+| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树、工作区、状态栏；快捷键；会话切换。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`（思考/文本/工具调用/命令执行/文件变更五类卡片，全部读真实 `row.tool` 数据）、`actions`、`composer`。 |
 | `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（事件 → 行：思考/文本增量进当前行，`ToolExecStart/End` 生成/填充工具卡片行，后续轮次追加新助手行）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
 | `agenttools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以工作区为根，`write_file` 自动建父目录。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
 | `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查），`settings.json` 读写与回退。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
-| `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`readCapped` 文件预览（256 KiB 上限）、`previewLang` 高亮映射、`attachFile` 附加到对话、`reloadWorkspace`。 |
+| `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`wsEnsureLoaded`（Outline 行内触发）、`readCapped` 文件预览（256 KiB 上限）、`attachFile` 附加到对话、`reloadWorkspace`。 |
 | `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、`sessions.json`（按工作区分组的全部会话与对话记录）、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
 | `drawer.go` | **代码抽屉**：右侧 `overlay.Drawer`（宽 720）大尺寸查看器——树点击打开文件内容（Raw/Fmt + 附加），仓库面板 `maximize` 把 Diff/源码放大进来；内容高度按窗高推导（抽屉内容区是 Scroll，grow 会塌）。 |
 | `vcs.go` | **真实 git 后端**：`runGit`（15s 超时）、`parseStatus`/`parseBranches`/`parseLog`（porcelain 解析）、`collectVCS` 快照、`fileVersions`（HEAD / index / worktree 三方取版本，二进制探测）、`vcsAction`（stage/unstage）、`commitStaged`（含 amend）、`checkoutBranch`/`createBranch`、`loadSelectedDiff`。 |
-| `repo.go` | 右栏检视器：Workspace 标签（目录树 + 文件预览 + 附加按钮）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
+| `repo.go` | 右栏检视器：Workspace 标签（`ui.Outline` 目录树：自定义行 + 右键菜单附加/查看/复制路径）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
 | `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`、`tokensT` 别名。 |
 | `commands.go` | ⌘K 命令面板与 `runCommand`（含 providers / agent / workspace / reload-workspace 命令）。 |
 | `main_test.go` | 测试：各视图渲染、发送、会话切换、命令面板、Provider 重绑、Agent 配置、Settings 模态框渲染。 |
@@ -164,20 +164,21 @@ require (
 
 ```go
 type app struct {
-    thread    thread                    // 当前会话的对话线程
-    repo      repo                      // 仓库检视器状态
-    ws        workspace                 // 工作区（目录树）
-    fdraw     fileDrawer                // 大尺寸代码抽屉（drawer.go）
-    conv      chat.ChatConversation     // 当前会话（供 ConversationItem 等使用）
-    convList  chat.ConversationListState// 会话列表的选择/滚动
-    sessionID string                    // 当前会话 id
-    sessions  []session                 // 会话索引（跨工作区全量，按工作区过滤展示）
-    threads   map[string]thread         // 按会话缓存的工作线程（切走再切回保留草稿）
+    thread    thread                   // 当前会话的对话线程
+    repo      repo                     // 仓库检视器状态
+    ws        workspace                // 工作区（目录树）
+    fdraw     fileDrawer               // 大尺寸代码抽屉（drawer.go）
+    conv      chat.ChatConversation    // 当前会话（供 ConversationItem 等使用）
+    sessTree  ui.OutlineState[string]  // 侧栏会话树（workspace→session）展开状态
+    sessionID string                   // 当前会话 id
+    sessions  []session                // 会话索引（跨工作区全量，树上按工作区分组）
+    threads   map[string]thread        // 按会话缓存的工作线程（切走再切回保留草稿）
 
     // workspace store（wsstore.go）
     recents      []string // 最近打开的工作区，最新在前（上限 6）
     wsDialogOpen bool     // Open-workspace 对话框
     wsPathField  string   // 对话框里的目录输入框
+    wsCursor     int      // 目录树选中行游标（-1 = 无）
 
     // shell
     navOpen     bool                    // 左栏是否展开
@@ -279,7 +280,7 @@ type repo struct {
 
 工作区树本身在 `workspace`（`workspace.go`）：`root`（`newApp()` 时取 `homeDir()`）、
 `nodes map[string]wsNode`（已列目录：子项/状态/错误；文件不注册）、
-`tree data.TreeState[string]`（展开/选中状态）。
+`outline ui.OutlineState[string]`（展开/选中状态；行是自定义构建的）。
 
 ### 5.5 `vcsFile` —— 变更条目模型
 
@@ -327,22 +328,25 @@ Column (Fill, Background)
 
 - `layout.TitleBar(c, "Atlas", {Leading, Trailing})`。
 - Leading：`bot` 图标 + "Atlas" 字标 + 会话栏折叠按钮（`menu`）。
-- Trailing：当前模型名 + 仓库检视器折叠按钮（`git-pull-request`）+ 头像。
+- Trailing：当前模型名 + Provider/Agent 设置 + **`folder` 按钮（直达右侧目录树面板：
+  `showRepo=true, paneTab=0`）** + `git-pull-request` 检视器开关 + 头像。
 
-### 6.2 会话栏 `sidebar`
+### 6.2 会话栏 `sidebar` —— workspace → session 两级树
 
-**工作区列表为主体**（切换工作区是第一轴，会话停靠在下方）：
+**会话树**：第一层是 workspace 目录名，其会话嵌套在下面（Codex 风格按项目分组）：
 
 - **Workspaces 头行**：标题 + `plus` 图标按钮（`openWsDialog()`）。
-- **工作区列表**（`ui.Scroll(Grow 1)`，占侧栏大部分高度）：当前根在最上
-  （`Selection` 底高亮），其后是 recents；每行 `wsRow` = folder 图标 +
-  目录名（粗体）+ 完整路径（小字，`SingleLine`+Tooltip），点击
-  `openWorkspace(path)` 切换；末尾固定一行 "Open workspace…"（手输路径入口）。
-- **Sessions 头行** + `ui.PrimaryButton("New chat")` → `newThread()`。
-- **会话列表**：`chat.ConversationList(&a.convList, items, {Label:"Sessions"}, nil)`
-  固定高 220 停靠底部，`items` 只含 `s.ws == a.ws.root` 的会话：
-  - `.Changed()` → `openSession(a.convList.Selected)`。
-  - `.Submitted()` → toast。
+- **会话树**：`ui.Outline[string]`（虚拟化，`Grow(1).MinHeight(0)`），键为
+  `"ws:<path>"` / `"sess:<id>"`：
+  - 根 = 当前工作区在前、recents 在后（`sessionTreeRoots`）；
+  - `Children("ws:<path>")` = 该工作区的会话（`sessionTreeChildren`），会话为叶子；
+  - **workspace 行**：folder 图标 + 目录名（粗体）+ 会话数徽标；当前根用
+    `AccentText` 高亮；**点击 = 展开/折叠**（翻转 `sessTree.Open`），不切换工作区；
+  - **session 行**：`message-square` 图标 + 标题；当前会话 `AccentText`；点击
+    `openSession(id)`，会话属于其它工作区时**先 `openWorkspace(ws)` 再打开**；
+  - 当前工作区节点在 `restoreSession` / `newThread` 时自动展开。
+- **"Open workspace…" 行**（树下方固定一行，手输路径入口）+ **`New chat`
+  PrimaryButton**（在当前工作区建会话）。
 
 ### 6.3 状态栏 `statusbar`
 
@@ -551,17 +555,27 @@ Column(Fill)
    `refresh-cw` 图标按钮（`reloadWorkspace()`：清空 `nodes` 与树状态、关闭代码抽屉）。
    根默认是**用户主目录**（`homeDir()`），可从侧栏的工作区列表或 ⌘K "Open workspace…"
    改为任意目录（见 §9.4）。
-2. **目录树**（占满标签页，预览框已移除）：`data.Tree[string]`（虚拟化、只构建可见行），
-   `Element.Grow(1).MinHeight(0)`：
-   - `Roots` = `[root]`（root 为空显示 `Empty` 文案）；
-   - `Children`：文件 → `nil`（叶子）；目录 → 已列子路径，未列出返回**空非 nil 切片**；
-   - `ItemStatus`：目录返回其加载状态（`DataUnloaded`/`DataLoading`/`DataReady`/`DataFailed`），文件返回 `DataReady`；
-   - `Load`：`loadWsDir(path)` —— 标记 `DataLoading` 后列目录，有窗口时在 goroutine 里
-     执行并经 `a.redraw` 回 UI 线程（`applyWsDir`），无窗口（测试）同步执行；
-   - `Label`：`filepath.Base(path)`。
+2. **目录树**（占满标签页，预览框已移除）：`ui.Outline[string]`（虚拟化、只构建可见行、
+   **自定义行内容**），`Element.Grow(1).MinHeight(0)`，选择游标 `a.wsCursor`
+   （`outline.List.Selected` 指向它，单击才有 `Changed`）：
+   - `Roots` = `[root]`；`Children`：文件 → `nil`（叶子）；目录 → 已列子路径，
+     未列出返回**空非 nil 切片**（显示展开箭头）；
+   - **行内容 `wsTreeRow`**：类型图标（目录 `folder`、代码文件 `file-code`、其余
+     `file`）+ 文件名 + 状态（列目录中 `core.Spinner`、失败 `circle-alert` 危险色）；
+     行带 `Label("tree:<path>")` 供测试点击；
+   - **懒加载**：行构建时 `wsEnsureLoaded(path)` —— 目录已展开且 `DataUnloaded` 就
+     `loadWsDir`（状态同步翻成 Loading，每目录只问一次；有窗口时 goroutine +
+     `a.redraw`，无窗口同步）；
+   - **右键菜单（文件）**：MyGo 原生 `row.ContextMenu` —— "Add to conversation"
+     （`attachFile` + toast）/ "Open in viewer"（`openFileDrawer`）/ "Copy path"
+     （剪贴板 + toast）；
    - `.Changed()`（单击选中）→ `selectWsNode(path, false)`；`.Submitted()`（Enter/双击）→
      `selectWsNode(path, true)`。文件 → `openFileDrawer`（大抽屉，见下）；目录仅在
      submitted 时翻转展开。
+
+> 上游缺口：`ui.List`/`ui.Outline` 的行内 `HandleInput` 收不到指针事件（listRow
+> 处理器优先），所以行内右键用 MyGo 原生 `Element.ContextMenu`（`menuTarget` 走
+> `flagContextMenu`），而不是 `overlay.ContextMenu`（依赖 HandleInput，在行内失效）。
 
 **代码抽屉（`drawer.go`）**：点击树中文件打开右侧 `overlay.Drawer`（宽 720、
 `DrawerRight`，Escape / 头部 ✕ 关闭）：标题为工作区相对路径，工具行有截断标注、
@@ -735,18 +749,20 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   读文件出现工具调用卡；多轮时每轮各占一行；列表滚到底。
 - [ ] `New chat` / ⌘N → 清空到欢迎页；能力卡示例可填入草稿；starter chip 可即发。
 - [ ] 会话列表切换 → 内容随之变化；切走再切回保留草稿。
-- [ ] 侧栏以**工作区列表为主体**：当前根高亮在首行、recents 在下、末行
-  "Open workspace…"；点行即切换；`plus` 打开路径对话框；Sessions 停靠底部
-  （固定高 220）只列当前工作区的会话；重启后恢复上次工作区与会话
-  （`workspace.json` / `sessions.json`）。
+- [ ] **侧栏是 workspace→session 两级树**：当前工作区节点自动展开、其会话嵌套在
+  下（当前根与会话用强调色高亮）；点 workspace 行只展开/折叠（显示会话数徽标），
+  点其它工作区下的会话会**先切工作区再打开会话**；末行 "Open workspace…" +
+  `New chat` 按钮；重启后恢复上次工作区与会话（`workspace.json` / `sessions.json`）。
+- [ ] 标题栏 `folder` 按钮**直达右侧目录树面板**；`git-pull-request` 开关整个检视器。
 - [ ] 代码抽屉：树中点击文件滑出右侧大抽屉（宽 720），内容填满、Raw/Fmt 可切换、
   可附加到对话，Escape/✕ 关闭；仓库面板 `maximize` 把 Diff/源码放大进抽屉；
   刷新工作区会关闭抽屉。
-- [ ] ⌘B / ⌘J 折叠左栏 / 右栏；标题栏两个按钮同效。
+- [ ] ⌘B / ⌘J 折叠左栏 / 右栏；标题栏按钮同效。
 - [ ] ⌘K 打开面板；9 条命令各自生效。
-- [ ] Workspace 标签：树列出真实目录（目录在前、噪音目录跳过）；展开子目录懒加载；
-  点文件滑出抽屉查看；抽屉 `Attach` 按钮把文件附加到对话（composer 出现 chip，发送后
-  内容进入 LLM 消息）；刷新按钮重载；状态栏显示工作区名。
+- [ ] Workspace 标签：树列出真实目录（目录在前、噪音目录跳过）；展开子目录懒加载
+  （加载中转圈、失败警示）；点文件滑出抽屉查看；**文件行右键 → "Add to conversation"**
+  直接附加（composer 出现 chip，发送后内容进入 LLM 消息），菜单另有
+  "Open in viewer" / "Copy path"；刷新按钮重载；状态栏显示工作区名。
 - [ ] Repository 标签（真实 git）：列出真实分支/变更/历史；行内按钮 stage/unstage、
   组按钮全部暂存/取消；选中变更驱动 Diff（暂存= HEAD vs index，未暂存= index vs 工作区）；
   提交输入写标题后 Commit 真实提交；切分支/建分支生效；刷新按钮重收状态。
@@ -767,7 +783,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 | 区域 | MujicaUI 组件 |
 | --- | --- |
 | 外壳/标题/状态 | `layout.TitleBar`、`layout.StatusBar` |
-| 会话列表 | `chat.ConversationList` |
+| 会话树/目录树 | MyGo `ui.Outline`（自定义行 + 原生 `Element.ContextMenu`） |
 | 对话容器/列表 | `chat.ChatContainer`、`chat.MessageList`(+Options) |
 | 消息体 | `chat.MessageBubble`、`chat.MarkdownView`、`chat.StreamingText`、`chat.ThinkingBlock`、`chat.TypingIndicator` |
 | 消息操作 | `chat.MessageActions` |
@@ -775,14 +791,13 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 | 欢迎 | `chat.WelcomeScreen`、`chat.SuggestionChips`、`chat.CapabilityCard` |
 | Agent 卡 | `agent.ToolCallCard`、`agent.FileChangeCard`、`agent.CommandExecutionCard`、`agent.MultiFileDiffReview` |
 | 仓库 | `git.BranchSelector`、`git.ChangesList`、`git.CommitInput`、`git.CommitList`、`git.DiffViewer`、`git.GitStatusBadge` |
-| 工作区树 | `data.Tree`（懒加载：`Children`/`ItemStatus`/`Load`） |
 | 代码 | `code.CodeViewer` |
 | 命令面板 | `navigation.CommandPalette` |
 | 图标/主题 | `icons.Must`、`core.Use`、`core.Tokens` |
 | 布局原语 | MyGo `ui.Row/Column/Box/Scroll/Segmented/Button/ButtonBase/PrimaryButton/Icon/Text/Avatar` |
 
 > 约束：所有固定数据一旦传入组件就必须满足其契约（否则 MujicaUI 会 panic）。
-> 例如 `ConversationList` 的 ID、`ChangesList` 的文件、`CommandPalette` 的 `Command.ID`。
+> 例如 `ChangesList` 的文件、`CommandPalette` 的 `Command.ID`。
 
 ---
 
@@ -804,15 +819,17 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    （`config_test.go`）—— 持久化往返、瞬态字段不落盘、缺失/损坏回退默认、
    Escape 关闭对话框即保存、**对话框开着时值一漂移即写盘**。
 7. **`TestListDir` / `TestWorkspaceLazyLoad` / `TestWorkspacePreview` /
-   `TestWorkspaceTreeRender` / `TestWorkspaceCommands`**（`workspace_test.go`）——
-   用 `t.TempDir()` 造真实目录：列举排序（目录在前、大小写不敏感）与忽略规则；
-   懒加载状态机（Unloaded→Loading→Ready/Failed）、文件是叶子；抽屉读取/语言映射/
-   256 KiB 截断/缺失文件错误；`NewTester` 打开根目录 → 树列出文件 → 点击行滑出
-   抽屉；workspace / reload-workspace 命令（reload 关闭抽屉）。
+   `TestWorkspaceTreeRender` / `TestTreeFileContextMenu` / `TestWorkspaceCommands`**
+   （`workspace_test.go`）—— 用 `t.TempDir()` 造真实目录：列举排序（目录在前、
+   大小写不敏感）与忽略规则；懒加载状态机（Unloaded→Loading→Ready/Failed）、文件是
+   叶子；抽屉读取/语言映射/256 KiB 截断/缺失文件错误；`NewTester` 打开根目录 →
+   树列出文件 → 点击行滑出抽屉；**文件行右键 → 菜单 "Add to conversation" 真实附加**；
+   workspace / reload-workspace 命令（reload 关闭抽屉）。
 8. **`TestFormatSource` / `TestFmtViewToggle` / `TestPreviewFormatToggle` /
    `TestSidebarWorkspaceList`**（`workspace_test.go`）—— gofmt 规范化 `.go`、
    `json.Indent` 美化、解析失败/其它语言不可格式化；`fmtView` 原始→格式化切换、
-   缓存键随内容失效；抽屉 Raw/Fmt 渲染；侧栏工作区列表渲染 + 点行切换。
+   缓存键随内容失效；抽屉 Raw/Fmt 渲染；**侧栏会话树**：当前工作区自动展开、
+   其它工作区折叠，点 workspace 行只展开不切换，点其下会话先切工作区再打开。
 9. **`TestParseStatus` / `TestParseBranchesAndLog` / `TestVCSRealRepo` /
    `TestRepositoryPaneAttach`**（`vcs_test.go`）—— porcelain 解析（分支头、
    `MM` 双条、重命名、删除）；用真实 git 命令在临时目录建仓库后跑完整版本管理闭环：
@@ -824,8 +841,8 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
     `TestSidebarFiltersSessions` / `TestWorkspaceDialog` / `TestHomeDirDefault`**
     （`wsstore_test.go`）—— `workspace.json` 往返（当前根 + recents 置顶）；
     `sessions.json` 往返（含在途会话的行、全部会话绑定工作区）；切换工作区的
-    校验/重根/会话恢复/recents；侧栏只列当前工作区的会话（渲染断言其它工作区
-    会话不出现）；对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
+    校验/重根/会话恢复/recents；侧栏树上其它工作区默认折叠、其会话不出现；
+    对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
 12. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
    且两条关闭路径都写出 `settings.json`（`configPath` 指向临时目录，不碰真实配置）。
 13. **`TestAgentToolsBash` / `TestAgentToolsReadWrite` / `TestAgentCardsRender` /

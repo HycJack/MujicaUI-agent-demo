@@ -50,7 +50,7 @@ func TestScreenshots(t *testing.T) {
 		wk.ws = newWorkspace(wd) // browse the app's own directory for the shot
 	}
 	wk.runCommand("workspace")
-	wk.ws.tree.SetOpen(wk.ws.root, true)
+	wk.ws.outline.Open.Add(wk.ws.root)
 	wk.loadWsDir(wk.ws.root) // headless: lists synchronously
 	shot("workspace-tree", wk)
 	for _, e := range wk.wsChildren(wk.ws.root) {

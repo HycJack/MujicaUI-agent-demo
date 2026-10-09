@@ -142,7 +142,7 @@ func TestWorkspaceTreeRender(t *testing.T) {
 	}
 	a := newApp()
 	a.ws = newWorkspace(root)
-	a.ws.tree.SetOpen(root, true) // the tree loads a directory when it opens
+	a.ws.outline.Open.Add(root) // the tree loads a directory when it opens
 	a.repo.showRepo = true
 	a.repo.paneTab = 0
 	tst := ui.NewTester(a.view, 1280, 820)
@@ -151,7 +151,7 @@ func TestWorkspaceTreeRender(t *testing.T) {
 	if !tst.HasText("hello.go") {
 		t.Fatalf("the tree does not list hello.go (texts: %v)", tst.Texts())
 	}
-	if err := tst.Click("hello.go"); err != nil {
+	if err := tst.Click("tree:" + filepath.Join(root, "hello.go")); err != nil {
 		t.Fatalf("click the tree row: %v", err)
 	}
 	tst.Frame()
@@ -256,29 +256,82 @@ func TestPreviewFormatToggle(t *testing.T) {
 	}
 }
 
-// The sidebar leads with the workspace list: the current root highlighted,
-// recents underneath, and clicking a row switches the workspace.
+// Right-clicking a file in the tree opens the context menu whose first
+// entry attaches the file to the conversation.
+func TestTreeFileContextMenu(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "hello.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp()
+	a.ws = newWorkspace(root)
+	a.ws.outline.Open.Add(root)
+	a.repo.showRepo = true
+	a.repo.paneTab = 0
+	tst := ui.NewTester(a.view, 1280, 820)
+	tst.Frame()
+	tst.Frame()
+	if err := tst.RightClick("tree:" + filepath.Join(root, "hello.go")); err != nil {
+		t.Fatalf("right-click the file row: %v", err)
+	}
+	tst.Frame()
+	if err := tst.ChooseMenuItem("Add to conversation"); err != nil {
+		t.Fatalf("choose the attach item: %v", err)
+	}
+	tst.Frame() // the chosen item reports in the frame after the menu closes
+	if len(a.thread.ctx) != 1 || a.thread.ctx[0].Label != "hello.go" {
+		t.Fatalf("the context menu did not attach the file: %+v", a.thread.ctx)
+	}
+	if ui.Render(a.view, 1280, 820, 1) == nil {
+		t.Fatal("render nil with the attachment chip")
+	}
+}
+
+// The sidebar is a session tree grouped by workspace: the current root's
+// node is open, clicking another workspace's row expands it (it does not
+// switch), and clicking a session under it opens that session — switching
+// the workspace first when it belongs elsewhere.
 func TestSidebarWorkspaceList(t *testing.T) {
 	dir, other := t.TempDir(), t.TempDir()
 	a := newApp()
 	a.ws = newWorkspace(dir)
 	a.recents = []string{dir, other}
+	a.sessions = []session{
+		{id: "s1", title: "Root session", ws: dir},
+		{id: "s2", title: "Other session", ws: other},
+	}
+	a.restoreSession() // opens the current workspace's tree node, selects s1
 	tst := ui.NewTester(a.view, 1280, 820)
 	tst.Frame()
 	if !tst.HasText("Workspaces") {
 		t.Fatal("the workspace list section is missing")
 	}
-	if _, ok := tst.Find("workspace:" + other); !ok {
-		t.Fatal("the recent workspace row is missing")
+	if !tst.HasText("Root session") {
+		t.Fatal("the current workspace's sessions are not visible")
 	}
-	if err := tst.Click("workspace:" + other); err != nil {
+	if tst.HasText("Other session") {
+		t.Fatal("another workspace's sessions should stay collapsed")
+	}
+	// Expanding the other workspace reveals its session but does not switch.
+	if err := tst.Click("ws:" + other); err != nil {
 		t.Fatalf("click the workspace row: %v", err)
 	}
 	tst.Frame()
-	if a.ws.root != other {
-		t.Fatalf("clicking the row did not switch: %q", a.ws.root)
+	if !a.sessTree.Open.Has("ws:" + other) {
+		t.Fatal("clicking the workspace row did not expand it")
 	}
-	if !tst.HasText("Sessions") {
-		t.Fatal("the sessions section is missing")
+	if a.ws.root != dir {
+		t.Fatalf("expanding a workspace switched the root: %q", a.ws.root)
+	}
+	if !tst.HasText("Other session") {
+		t.Fatal("the expanded workspace's session is missing")
+	}
+	// Clicking that session opens it and switches the workspace.
+	if err := tst.Click("sess:s2"); err != nil {
+		t.Fatalf("click the session row: %v", err)
+	}
+	tst.Frame()
+	if a.ws.root != other || a.sessionID != "s2" {
+		t.Fatalf("clicking the session did not open it: root=%q id=%q", a.ws.root, a.sessionID)
 	}
 }

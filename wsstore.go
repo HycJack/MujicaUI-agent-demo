@@ -256,14 +256,17 @@ func (a *app) openWsDialog() {
 }
 
 // restoreSession selects the newest session of the current workspace, or
-// an empty thread when the workspace has none yet.
+// an empty thread when the workspace has none yet. The current workspace's
+// tree node starts open so its sessions are visible.
 func (a *app) restoreSession() {
+	if a.ws.root != "" {
+		a.sessTree.Open.Add("ws:" + a.ws.root)
+	}
 	for _, s := range a.sessions {
 		if s.ws != a.ws.root {
 			continue
 		}
 		a.sessionID = s.id
-		a.convList.Selected = s.id
 		a.conv = chat.ChatConversation{ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned}
 		if t, ok := a.threads[s.id]; ok {
 			a.thread = t
@@ -273,7 +276,6 @@ func (a *app) restoreSession() {
 		return
 	}
 	a.sessionID = ""
-	a.convList.Selected = ""
 	a.thread = thread{mode: chat.ModeAgent}
 }
 

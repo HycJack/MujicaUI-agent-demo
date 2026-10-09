@@ -8,10 +8,13 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
+	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
 	"github.com/ZacharyZhang-NY/MujicaUI/layout"
 	"github.com/egoist/mygo/ui"
@@ -75,6 +78,9 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 				ui.Text(c, a.modelName()).FontSize(12).TextColor(k.TextMuted)
 				a.iconToggle(c, k, "settings", "Provider settings", func() { a.openProviders() })
 				a.iconToggle(c, k, "bot", "Agent settings", func() { a.openAgent() })
+				a.iconToggle(c, k, "folder", "Workspace tree", func() {
+					a.repo.showRepo, a.repo.paneTab = true, 0
+				})
 				a.iconToggle(c, k, "git-pull-request", "Toggle repo inspector", func() { a.repo.showRepo = !a.repo.showRepo })
 				ui.Avatar(c, "Ada Lovelace", nil).Tooltip("Ada Lovelace")
 			})
@@ -82,85 +88,128 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 	})
 }
 
-// sidebar leads with the workspace list — switching workspace is the
-// primary axis, the way Codex-style consoles put projects first — and
-// docks the current workspace's sessions underneath it.
+// sidebar is the session tree: one level per workspace directory, its
+// sessions nested beneath it — the way Codex-style consoles group projects.
+// Clicking a workspace toggles it open; clicking a session opens it (and
+// switches workspace first when it belongs elsewhere).
 func (a *app) sidebar(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(260).Shrink(0).Background(k.Surface).Padding(10, 10, 10).Gap(8).Children(func() {
-		// Workspaces: the current root first, then the recents; the plus
-		// button (and the trailing row) open the by-path picker.
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Workspaces").FontSize(11).TextColor(k.TextMuted).Grow(1)
 			a.iconToggle(c, k, "plus", "Open workspace…", a.openWsDialog)
 		})
-		ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).Gap(2).Children(func() {
-				a.wsRow(c, k, a.ws.root)
-				for _, r := range a.recents {
-					if r != a.ws.root {
-						a.wsRow(c, k, r)
-					}
-				}
-				b := ui.ButtonBase(c).Label("workspace-open-row").FillWidth().Padding(8).Radius(7).Gap(8).Cursor(ui.CursorPointer)
-				if b.Hovered() {
-					b.Background(k.SurfaceHover)
-				}
-				if b.Clicked() {
-					a.openWsDialog()
-				}
-				b.Children(func() {
-					ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
-					ui.Text(c, "Open workspace…").FontSize(12).TextColor(k.TextMuted)
-				})
-			})
+		restore := data.DataSelectTheme(c, 0)
+		e := ui.Outline(c, &a.sessTree, a.sessionTreeRoots(), a.sessionTreeChildren, func(item string) {
+			a.sessionTreeRow(c, k, item)
 		})
-		// Sessions of the current workspace, docked below the list.
-		ui.Text(c, "Sessions").FontSize(11).TextColor(k.TextMuted)
+		restore()
+		e.Grow(1).MinHeight(0)
+		b := ui.ButtonBase(c).Label("workspace-open-row").FillWidth().Padding(8).Radius(7).Gap(8).Cursor(ui.CursorPointer)
+		if b.Hovered() {
+			b.Background(k.SurfaceHover)
+		}
+		if b.Clicked() {
+			a.openWsDialog()
+		}
+		b.Children(func() {
+			ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
+			ui.Text(c, "Open workspace…").FontSize(12).TextColor(k.TextMuted)
+		})
 		newBtn := ui.PrimaryButton(c, "New chat")
 		if newBtn.Clicked() {
 			a.newThread()
 		}
-		items := make([]chat.ChatConversation, 0, len(a.sessions))
-		for _, s := range a.sessions {
-			if s.ws != a.ws.root {
-				continue // each workspace keeps its own sessions
-			}
-			items = append(items, chat.ChatConversation{ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned})
-		}
-		conv := chat.ConversationList(c, &a.convList, items, chat.ConversationListOptions{Label: "Sessions"}, nil)
-		conv.Element.Height(220).Shrink(0)
-		if conv.Changed() {
-			a.openSession(a.convList.Selected)
-		}
-		if conv.Submitted() {
-			c.Toast("Opened " + a.convList.Selected)
-		}
 	})
 }
 
-// wsRow is one workspace entry: folder icon, name and full path; the
-// current workspace is highlighted, clicking switches onto it.
-func (a *app) wsRow(c *ui.Context, k tokensT, path string) {
-	current := path == a.ws.root
-	b := ui.ButtonBase(c).Label("workspace:" + path).Tooltip(path).FillWidth().Padding(8).Radius(7).Gap(8).Cursor(ui.CursorPointer)
-	switch {
-	case current:
-		b.Background(k.Selection)
-	case b.Hovered():
-		b.Background(k.SurfaceHover)
+// sessionTreeRoots lists the tree's top level: the current workspace first,
+// then the recents, each as a "ws:<path>" key.
+func (a *app) sessionTreeRoots() []string {
+	out := []string{}
+	if a.ws.root != "" {
+		out = append(out, "ws:"+a.ws.root)
 	}
-	if b.Clicked() {
-		if msg := a.openWorkspace(path); msg != "" {
-			c.Toast(msg)
+	for _, r := range a.recents {
+		if r != a.ws.root {
+			out = append(out, "ws:"+r)
 		}
 	}
-	b.Children(func() {
-		ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.Accent)
-		ui.Column(c).Gap(1).Children(func() {
-			ui.Text(c, workspaceName(path)).FontSize(12).Bold().SingleLine()
-			ui.Text(c, path).FontSize(10).TextColor(k.TextMuted).SingleLine()
+	return out
+}
+
+// sessionTreeChildren returns a workspace's sessions ("sess:<id>") or nil
+// for a session leaf.
+func (a *app) sessionTreeChildren(item string) []string {
+	path, ok := strings.CutPrefix(item, "ws:")
+	if !ok {
+		return nil
+	}
+	out := []string{}
+	for _, s := range a.sessions {
+		if s.ws == path {
+			out = append(out, "sess:"+s.id)
+		}
+	}
+	return out
+}
+
+// sessionTreeRow builds one sidebar-tree row: a workspace line (folder,
+// name, session count; the current root highlighted; click toggles open)
+// or a session line (icon, title; click opens it, switching workspace if
+// it belongs to another root).
+func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
+	if path, ok := strings.CutPrefix(item, "ws:"); ok {
+		count := 0
+		for _, s := range a.sessions {
+			if s.ws == path {
+				count++
+			}
+		}
+		current := path == a.ws.root
+		row := ui.Row(c).Label(item).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Tooltip(path).Cursor(ui.CursorPointer)
+		if current {
+			row.TextColor(k.AccentText)
+		}
+		row.Children(func() {
+			ui.Icon(c, icons.Must("folder")).FontSize(14)
+			ui.Text(c, workspaceName(path)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0)
+			if count > 0 {
+				ui.Text(c, strconv.Itoa(count)).FontSize(10).TextColor(k.TextMuted)
+			}
 		})
+		if row.Clicked() {
+			if a.sessTree.Open.Has(item) {
+				a.sessTree.Open.Remove(item)
+			} else {
+				a.sessTree.Open.Add(item)
+			}
+		}
+		return
+	}
+	id, _ := strings.CutPrefix(item, "sess:")
+	var sess session
+	for _, s := range a.sessions {
+		if s.id == id {
+			sess = s
+			break
+		}
+	}
+	row := ui.Row(c).Label(item).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	if id == a.sessionID {
+		row.TextColor(k.AccentText)
+	}
+	row.Children(func() {
+		ui.Icon(c, icons.Must("message-square")).FontSize(13).TextColor(k.TextMuted)
+		ui.Text(c, sess.title).FontSize(12).SingleLine().Grow(1).MinWidth(0)
 	})
+	if row.Clicked() {
+		if sess.ws != "" && filepath.Clean(sess.ws) != filepath.Clean(a.ws.root) {
+			if msg := a.openWorkspace(sess.ws); msg != "" {
+				c.Toast(msg)
+			}
+		}
+		a.openSession(id)
+	}
 }
 
 // content is the working pane: the thread, with the repo inspector sliding in
@@ -214,14 +263,17 @@ func (a *app) iconToggle(c *ui.Context, k tokensT, icon, label string, fn func()
 }
 
 // newThread starts a fresh, empty chat under a new session id and selects
-// it in the index.
+// it in the index; the current workspace's tree node stays open so the new
+// session shows up under it.
 func (a *app) newThread() {
 	a.saveSession()
 	a.nextID++
 	a.sessionID = fmt.Sprintf("new-%d", a.nextID)
-	a.convList.Selected = a.sessionID
 	a.thread = thread{mode: chat.ModeAgent, model: a.thread.model}
 	a.sessions = append([]session{{id: a.sessionID, title: "New chat " + strconv.Itoa(a.nextID), updated: time.Now(), ws: a.ws.root}}, a.sessions...)
+	if a.ws.root != "" {
+		a.sessTree.Open.Add("ws:" + a.ws.root)
+	}
 	a.closeModals()
 	a.persistSessions()
 }

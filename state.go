@@ -14,6 +14,7 @@ import (
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
 	"github.com/ZacharyZhang-NY/MujicaUI/git"
+	"github.com/egoist/mygo/ui"
 )
 
 // kind selects how one transcript row renders.
@@ -181,7 +182,7 @@ type app struct {
 	ws        workspace
 	fdraw     fileDrawer
 	conv      chat.ChatConversation
-	convList  chat.ConversationListState
+	sessTree  ui.OutlineState[string] // sidebar tree: workspaces → their sessions
 	sessionID string
 	sessions  []session
 	threads   map[string]thread // in-flight transcripts, keyed by session
@@ -202,6 +203,7 @@ type app struct {
 	recents      []string // recently opened workspaces, newest first
 	wsDialogOpen bool     // the Open-workspace dialog
 	wsPathField  string   // the dialog's directory input
+	wsCursor     int      // the file tree's selected row (-1 = none)
 
 	// shell
 	navOpen     bool
@@ -216,6 +218,7 @@ func newApp() *app {
 		navOpen:     true,
 		repo:        repo{branch: "main"},
 		settingsTab: "providers",
+		wsCursor:    -1,
 	}
 	a.llm = a.defaultSettings()
 	if p, err := settingsFile(); err == nil {
