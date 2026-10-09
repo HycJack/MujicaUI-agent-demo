@@ -1,4 +1,4 @@
-package main
+package app
 
 // convfixture_test.go builds a representative agent conversation for the
 // layout and screenshot tests. One AI reply is ONE row: its thinking and

@@ -1,4 +1,4 @@
-package main
+package app
 
 // state.go holds the Crux app's data: the thread transcript, the repo
 // under the cursor, and the sessions list. Everything the UI shows is a

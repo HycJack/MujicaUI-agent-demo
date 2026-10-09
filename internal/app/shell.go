@@ -1,4 +1,4 @@
-package main
+package app
 
 // shell.go is the Crux desk: a title bar on top, a conversation sidebar
 // on the left, the working pane in the middle, a repo inspector that

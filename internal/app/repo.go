@@ -1,4 +1,4 @@
-package main
+package app
 
 // repo.go is the Crux right-hand inspector: the Workspace tab browses the
 // real directory tree, and the Repository tab manages the workspace's real

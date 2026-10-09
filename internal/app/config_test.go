@@ -1,4 +1,4 @@
-package main
+package app
 
 // config_test.go covers the settings persistence glue: a save/load roundtrip
 // keeps the editable fields, transient call state stays out of the file,

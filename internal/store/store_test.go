@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -175,6 +177,38 @@ func TestLegacyIndexMigration(t *testing.T) {
 	// A second run is a no-op.
 	if MigrateLegacyIndex(path, dir, clean) {
 		t.Fatal("migration ran twice")
+	}
+}
+
+// Concurrent saves of the same file must all succeed: the temp name is
+// unique per call, so parallel writers never consume each other's temp
+// (which used to fail the rename with "file not found").
+func TestWriteFileAtomicConcurrent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				if err := WriteFileAtomic(path, []byte(strconv.Itoa(i))); err != nil {
+					t.Errorf("write %d-%d: %v", i, j, err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	buf, err := os.ReadFile(path)
+	if err != nil || len(buf) == 0 {
+		t.Fatalf("final file unreadable: %q %v", buf, err)
+	}
+	// No temp litter survives a successful run.
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
 	}
 }
 

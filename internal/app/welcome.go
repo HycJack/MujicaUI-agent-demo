@@ -1,4 +1,4 @@
-package main
+package app
 
 // welcome.go is the new-chat surface: MujicaUI's WelcomeScreen with
 // capability cards and starter chips that feed the composer below.

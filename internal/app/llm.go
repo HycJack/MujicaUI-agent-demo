@@ -1,4 +1,4 @@
-package main
+package app
 
 // llm.go is the UI layer's adapter to the engine (internal/engine): it
 // converts the thread history into engine messages, runs the loop on a

@@ -1,4 +1,4 @@
-package main
+package app
 
 // tokens.go routes MujicaUI's tokens so every Crux pane draws through
 // the library's theme rather than a hand-rolled palette.

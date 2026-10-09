@@ -1,4 +1,4 @@
-package main
+package app
 
 // wsdialog.go is the Open-workspace modal: a directory field plus the
 // recent workspaces. The switching logic itself lives in persist.go.

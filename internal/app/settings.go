@@ -1,4 +1,4 @@
-package main
+package app
 
 // settings.go adds the Settings dialog the frontend needs: one modal with a
 // left source-list (Providers / Agent). Providers lets the user pick the

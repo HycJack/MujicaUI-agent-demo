@@ -52,7 +52,7 @@ go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 
    它是"跑不起来"或直接超时的，这**不代表代码有问题**。验证视图用无窗口方式：
    ```sh
    go test ./...                      # 内部用 ui.Render / ui.NewTester
-   MYGO_UI_SHOTS=/tmp/shots go test . -run TestScreenshots   # 输出每张界面 PNG
+   MYGO_UI_SHOTS=/tmp/shots go test ./internal/app -run TestScreenshots   # 输出每张界面 PNG
    ```
 2. **视图是状态的纯函数，每帧调用一次**：事件处理器里改状态，下一帧呈现结果。
    **不要跨帧缓存 `*ui.Element`**；不要让 goroutine 直接碰元素（只能在 `Window.Update(func(){...})` 里改状态）。
@@ -155,7 +155,7 @@ go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 
 | --- | --- |
 | `README.md` | 项目说明与截图；`MYGO_UI_SHOTS` 截图用法 |
 | `SPEC.md` | Crux 的完整规格文档 |
-| `*.go` | 各文件职责见 SPEC §4；`tokens.go` 演示如何只做主题转发 |
+| `*.go` | UI 层在 `internal/app/`（数据/逻辑层在 `internal/store`、`internal/engine`），各文件职责见 SPEC §4；`tokens.go` 演示如何只做主题转发 |
 | `screenshots/` | 渲染测试产出的界面截图 |
 
 组件级的参考实现（agent / chat / code / git 各组件的直接用法）见

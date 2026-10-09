@@ -1,4 +1,4 @@
-package main
+package app
 
 // mdview_test.go covers the selectable markdown renderer: the view
 // rendering headless, and the message action row — copy on every message,

@@ -1,4 +1,4 @@
-package main
+package app
 
 // mdview.go renders parsed markdown as SELECTABLE native text: every
 // prose run, list item, heading, quote and table cell is a selectable

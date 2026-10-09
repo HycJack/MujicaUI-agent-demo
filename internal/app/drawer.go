@@ -1,4 +1,4 @@
-package main
+package app
 
 // drawer.go is Crux's large right-hand code viewer: an overlay.Drawer that
 // slides over the inspector. The workspace tree opens file contents in it

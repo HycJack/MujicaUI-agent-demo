@@ -1,4 +1,4 @@
-package main
+package app
 
 // thread.go renders the Crux conversation: the scrolling transcript in
 // the middle, a composer below it, and the agent cards that a Codex-style

@@ -1,4 +1,4 @@
-package main
+package app
 
 // vcs_test.go covers the real git backend: porcelain parsing (pure), and
 // the whole version-management loop against a throwaway repository that

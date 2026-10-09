@@ -1,4 +1,4 @@
-package main
+package app
 
 // agenttools_test.go covers the UI side of tool runs: the three legacy card
 // rows a tool call produces render headless, and a streaming reply's tool

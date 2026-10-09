@@ -1,9 +1,9 @@
-package main
+package app
 
 // shots_test.go renders the app's key surfaces to PNG for the README and
 // for visual audits. It is a no-op unless MYGO_UI_SHOTS names a directory:
 //
-//	MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
+//	MYGO_UI_SHOTS=screenshots go test ./internal/app -run TestScreenshots
 
 import (
 	"image/png"
@@ -15,10 +15,33 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// moduleRoot walks up from the working directory to the directory holding
+// go.mod, so a relative MYGO_UI_SHOTS lands at the repo root no matter
+// which package's directory the test runs in.
+func moduleRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "."
+		}
+		dir = parent
+	}
+}
+
 func TestScreenshots(t *testing.T) {
 	dir := os.Getenv("MYGO_UI_SHOTS")
 	if dir == "" {
 		t.Skip("set MYGO_UI_SHOTS to a directory to write the UI screenshots")
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(moduleRoot(), dir)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

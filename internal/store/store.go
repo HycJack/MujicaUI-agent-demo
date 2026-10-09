@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DirName is the app's data folder name in the user's home directory.
@@ -94,25 +95,55 @@ func TranscriptPath(dir, id string) string {
 	return filepath.Join(dir, "sessions", sb.String()+".json")
 }
 
-// WriteFileAtomic replaces path with data: write a temp file, then rename.
-// A stale target with a broken ACL (the "Access is denied" class) is removed
-// once and the rename retried, so a bad file heals itself.
+// WriteFileAtomic replaces path with data: write a uniquely named temp file
+// in the target's directory, then rename it over the target. The unique
+// name (os.CreateTemp) keeps two saves of the same file — or two app
+// instances — from consuming each other's temp, which used to fail the
+// rename with "The system cannot find the file specified". A stale target
+// with a broken ACL (the "Access is denied" class) is removed once and the
+// rename retried, so a bad file heals itself. If the environment still
+// refuses the rename (antivirus interference with fresh .tmp files is the
+// usual suspect), the data falls back to a direct write rather than being
+// lost.
 func WriteFileAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		if rm := os.Remove(path); rm == nil {
-			if err2 := os.Rename(tmp, path); err2 == nil {
-				return nil
-			}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+		if err != nil {
+			return err
 		}
-		os.Remove(tmp)
-		return err
+		name := tmp.Name()
+		_, werr := tmp.Write(data)
+		if cerr := tmp.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			os.Remove(name)
+			lastErr = werr
+			time.Sleep(30 * time.Millisecond)
+			continue
+		}
+		if rerr := os.Rename(name, path); rerr != nil {
+			lastErr = rerr
+			if os.Remove(path) == nil { // heal a locked/broken-ACL target
+				if err2 := os.Rename(name, path); err2 == nil {
+					return nil
+				}
+			}
+		} else {
+			return nil
+		}
+		os.Remove(name)
+		time.Sleep(30 * time.Millisecond)
+	}
+	// The rename keeps failing (antivirus interference with fresh .tmp
+	// files is the usual suspect): write directly so the save is not lost.
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return lastErr
 	}
 	return nil
 }

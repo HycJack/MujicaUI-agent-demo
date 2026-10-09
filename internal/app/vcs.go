@@ -1,4 +1,4 @@
-package main
+package app
 
 // vcs.go is Crux's real version-control backend for the workspace: it
 // shells out to git in the workspace root and feeds the Repository tab's

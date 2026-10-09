@@ -1,4 +1,4 @@
-package main
+package app
 
 // wsstore_test.go covers the UI layer's persistence glue: the persisted
 // current workspace and recents, the per-workspace session transcripts

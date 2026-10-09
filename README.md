@@ -16,7 +16,7 @@ Codex 风格的编码 Agent 桌面应用：用 MyGo 原生 GPU 自绘 UI 工具�
 
 代码按**三层**组织：`internal/store`（数据层：落盘结构与原子写，不依赖 UI）、
 `internal/engine`（逻辑层：agent 循环与工具集，回调式事件，不依赖 UI）、
-根目录 `package main`（UI 层：状态、渲染与薄适配器）。
+`internal/app`（UI 层：状态、渲染与薄适配器）；根目录 `main.go` 只做引导。
 
 ## Screenshots 截图
 
@@ -115,34 +115,23 @@ go test ./...
 生成 README 用的界面截图（写入 `MYGO_UI_SHOTS` 指向的目录）：
 
 ```sh
-MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
+MYGO_UI_SHOTS=screenshots go test ./internal/app -run TestScreenshots
 ```
 
 ## Project structure 项目结构
 
-三层结构：数据（`internal/store`）/ 逻辑（`internal/engine`）/ UI（根目录）。
+三层结构：数据（`internal/store`）/ 逻辑（`internal/engine`）/ UI（`internal/app`），
+根目录只剩引导与文档。
 
 | 路径 | 职责 |
 | --- | --- |
-| `internal/store/` | **数据层**（无 UI 依赖）：家目录 `~/.crux-agent/` 布局、旧目录迁移链（`%AppData%` → `~/.mujicaui-agent-demo` → `~/.crux-agent`）、settings / workspace / 会话索引 / 每会话转录的落盘结构与原子写 |
+| `internal/store/` | **数据层**（无 UI 依赖）：家目录 `~/.crux-agent/` 布局、旧目录迁移链（`%AppData%` → `~/.mujicaui-agent-demo` → `~/.crux-agent`）、settings / workspace / 会话索引 / 每会话转录的落盘结构与原子写（唯一临时名 + 重试 + 兜底直写） |
 | `internal/engine/` | **逻辑层**（无 UI 依赖）：pi-ai-go agent 循环封装（回调式流事件）、`bash` / `read_file` / `write_file` 工具集、模型解析与 Reasoning 档位、连接测试、provider 注册表门面 |
 | `internal/md/` | 纯 Markdown 解析（块级结构，供 UI 层渲染为可选中元素） |
-| `main.go` | 入口：旧存储迁移、窗口创建、心跳 goroutine、`App.Run()` |
-| `state.go` | UI 状态模型（`app` / `thread` / `row` + `toolRun` / `repo` / `session` / `LLMSettings`） |
-| `shell.go` | 外壳布局：标题栏（含目录树直达按钮）、侧栏 workspace→session 两级会话树、快捷键、状态栏 |
-| `thread.go` | 对话线程：消息列表、**一条回复一个气泡**（思考+工具调用折叠块、Markdown 正文）、输入区 |
-| `llm.go` | 引擎适配器：线程历史 ↔ engine 消息、回调落回行状态（经 `a.redraw`）、中止与错误处理 |
-| `persist.go` | 持久化胶水：行 ↔ store.Message 转换、会话索引/转录同步（脏标记增量写）、会话与工作区切换逻辑 |
-| `wsdialog.go` | Open-workspace 对话框 |
-| `settings.go` | Settings 模态框：Providers / Agent 两个分区（打开期间实时保存） |
-| `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 文件附加到对话 |
-| `drawer.go` | 代码抽屉：右侧 720 宽大尺寸查看器（文件内容 / Diff / 源码，Raw/Fmt 格式化） |
-| `mdview.go` | 可选中 Markdown 渲染（解析在 `internal/md`） |
-| `vcs.go` | 真实 git 后端：status / branch / log 解析、stage / unstage / commit / checkout |
-| `repo.go` | 右栏检视器：Workspace 树（文件右键附加/查看/复制路径）/ Repository（真实分支、变更、提交、Diff / 源码） |
-| `welcome.go` | 新会话欢迎页：能力卡 + starter chips |
-| `commands.go` | ⌘K 命令面板 |
-| `tokens.go` | 主题接入：MujicaUI 令牌转发 |
+| `internal/app/` | **UI 层**：`app.go` 引导（迁移/恢复状态/窗口/心跳）、`state.go` 状态模型、`shell.go` 外壳与侧栏、`thread.go` 对话线程（一条回复一个气泡）、`llm.go` 引擎适配器、`persist.go` 持久化胶水、`settings.go` 设置模态框、`workspace.go` 目录树、`drawer.go` 代码抽屉、`mdview.go` 可选中 Markdown 渲染、`vcs.go` 真实 git 后端、`repo.go` 检视器、`welcome.go` 欢迎页、`commands.go` ⌘K 面板、`wsdialog.go` 工作区对话框、`tokens.go` 主题转发 |
+| `main.go` | 入口：调用 `app.Run()` |
+| `mygo.json` | 打包元数据 |
+| `resources/icon.png` | 应用图标 |
 
 完整规格（架构、状态模型、交互清单、上游组件映射）见 [SPEC.md](SPEC.md)；
 给改动者/Agent 的编码约定见 [AGENTS.md](AGENTS.md)。

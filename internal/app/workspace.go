@@ -1,4 +1,4 @@
-package main
+package app
 
 // workspace.go is Crux's workspace: the real directory the session works
 // in, browsed as a lazily-loaded file tree in the right-hand pane the way

@@ -52,8 +52,9 @@ Crux 把一次编码会话摊开成三块：
 
 ## 2. 运行与构建
 
-模块路径：仓库根目录，包名 `main`（UI 层）；数据层 `internal/store`、逻辑层
-`internal/engine`、Markdown 解析 `internal/md`。
+模块路径：仓库根目录；根 `main.go` 只做引导（调用 `app.Run()`）。数据层
+`internal/store`、逻辑层 `internal/engine`、Markdown 解析 `internal/md`、
+UI 层 `internal/app`。
 
 ```sh
 go run .            # 运行（打开窗口）
@@ -156,11 +157,13 @@ UI（根目录 `package main`）；数据层与逻辑层**不 import 任何 UI �
 | --- | --- |
 | `md.go` | 块级解析 `Parse(src) []Block`：标题/散文段（跨段合并）/列表/引用/表格/代码围栏/分隔线。 |
 
-### 4.4 UI 层（根目录 `package main`）
+### 4.4 UI 层 `internal/app`（package app）
+
+以下文件均位于 `internal/app/`；仓库根的 `main.go` 只调用 `app.Run()`。
 
 | 文件 | 职责 |
 | --- | --- |
-| `main.go` | 入口：`store.Migrate()`、`newApp()`、`loadSettings()`、store 路径接线、窗口创建、`a.redraw = win.Update`、心跳 goroutine、`App.Run()`。 |
+| `app.go` | 引导 `Run()`：`store.Migrate()`、`newApp()`、`loadSettings()`、store 路径接线、窗口创建、`a.redraw = win.Update`、心跳 goroutine、`mygo.App.Run()`。 |
 | `state.go` | UI 状态模型：`app` / `thread` / `row`（含 `tools []*toolRun` 合并卡块）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`（内嵌 `store.LLMConfig` + 瞬态字段）；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
 | `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树（`sidebar`）、工作区、状态栏；快捷键。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`（一条回复一个气泡：等待提示 + 思考/工具折叠块 + 可选中正文）、`actions`（复制/重新生成/时间）、`composer`、`regenerate`。 |
@@ -215,7 +218,7 @@ type app struct {
 ```
 
 持久化路径字段（`configPath` / `sessionsPath` / `wsPrefsPath`）为空时禁用对应
-存储 —— `newApp()` 只设 `configPath`，`sessionsPath`/`wsPrefsPath` 由 `main.go`
+存储 —— `newApp()` 只设 `configPath`，`sessionsPath`/`wsPrefsPath` 由 `app.Run`
 接线，因此测试里的 `newApp()` 从不碰盘。
 
 `newApp()` 构造初始状态：**无种子会话**（`sessionID=""`、`sessions=nil`、空线程），
@@ -861,7 +864,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 
 ---
 
-## 14. 测试（各 `*_test.go`）
+## 14. 测试（`internal/app` 与各内部包的 `*_test.go`）
 
 在无窗口环境下用 `ui.Render(view, w, h, scale)` / `ui.NewTester(view, w, h)` 驱动。
 

@@ -1,4 +1,4 @@
-package main
+package app
 
 // persist.go is the UI layer's persistence glue: it moves transcript rows
 // in and out of the store's data-layer schemas, keeps the session index and

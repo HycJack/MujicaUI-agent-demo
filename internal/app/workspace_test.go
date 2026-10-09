@@ -1,4 +1,4 @@
-package main
+package app
 
 // workspace_test.go covers the workspace tree: directory listings sort
 // folders first and skip noise, the tree lazy-loads headless, the preview

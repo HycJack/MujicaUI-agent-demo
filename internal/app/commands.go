@@ -1,4 +1,4 @@
-package main
+package app
 
 // commands.go is Crux's command palette (⌘K): the actions a coding
 // console exposes — new chat, fold the panels, jump between the diff and
