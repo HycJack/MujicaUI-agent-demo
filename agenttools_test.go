@@ -126,7 +126,8 @@ func mustJSON(t *testing.T, v any) string {
 	return string(buf)
 }
 
-// The three tool card rows render headless with real toolRun data.
+// The three tool card rows render headless with real toolRun data (legacy
+// standalone tool rows, kept for transcripts stored before the merge).
 func TestAgentCardsRender(t *testing.T) {
 	a := newApp()
 	a.thread.rows = []row{
@@ -153,6 +154,37 @@ func TestAgentCardsRender(t *testing.T) {
 	}
 	if ui.Render(a.view, 1280, 820, 1) == nil {
 		t.Fatal("agent cards render nil")
+	}
+}
+
+// One AI reply is ONE row: a headless send produces two rows, and tool
+// calls that arrive afterwards merge into the assistant row's card block
+// instead of creating rows. Once the reply ends, streaming clears so the
+// text renders as markdown.
+func TestAgentTurnsMergeIntoOneRow(t *testing.T) {
+	a := newApp()
+	a.thread.draft = "run it"
+	a.send() // headless: user row + finished assistant row
+	if len(a.thread.rows) != 2 {
+		t.Fatalf("send produced %d rows, want 2", len(a.thread.rows))
+	}
+	asst := a.thread.rows[1]
+	if asst.streaming {
+		t.Fatal("a finished headless reply must not be streaming")
+	}
+	a.appendTurnTool(asst.id, "c1", "bash", `{"command":"echo hi"}`)
+	a.appendTurnTool(asst.id, "c2", "write_file", `{"path":"x.txt"}`)
+	a.finishToolRow("c1", `{"content":[{"text":"hi"}]}`, false, 10*time.Millisecond)
+	a.finishToolRow("c2", `{"content":[{"text":"ok"}],"details":{"path":"x.txt","old":"a","new":"b"}}`, false, 5*time.Millisecond)
+	if len(a.thread.rows) != 2 {
+		t.Fatalf("tool calls created rows: %d", len(a.thread.rows))
+	}
+	tools := a.thread.rows[1].tools
+	if len(tools) != 2 || tools[0].run.Output != "hi" || tools[1].change.Path != "x.txt" {
+		t.Fatalf("merged tools wrong: %+v", tools)
+	}
+	if ui.Render(a.view, 1280, 820, 1) == nil {
+		t.Fatal("merged reply render nil")
 	}
 }
 

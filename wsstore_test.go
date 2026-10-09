@@ -6,6 +6,7 @@ package main
 // Open-workspace dialog.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,30 +45,105 @@ func TestSessionsRoundtrip(t *testing.T) {
 	a.thread.draft = "hello store"
 	a.send() // persists the transcript rows (headless placeholder reply)
 
+	// The index holds metadata only; the transcript lives in its own file.
+	idx, err := os.ReadFile(a.sessionsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(idx), `"rows"`) {
+		t.Fatal("the session index should not embed transcripts")
+	}
+	var st sessionStore
+	if err := json.Unmarshal(idx, &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Sessions) != 1 || !st.Sessions[0].Threaded {
+		t.Fatalf("index wrong: %+v", st.Sessions)
+	}
+	trPath := filepath.Join(dir, "sessions", st.Sessions[0].ID+".json")
+	tr, err := os.ReadFile(trPath)
+	if err != nil {
+		t.Fatalf("transcript file missing: %v", err)
+	}
+	if !strings.Contains(string(tr), "hello store") {
+		t.Fatalf("transcript lost the user row: %s", tr)
+	}
+
+	// A fresh app restores the index lazily; opening the session loads its
+	// transcript from the per-session file.
 	b := newApp()
 	b.sessionsPath = a.sessionsPath
+	b.ws = newWorkspace(dir)
 	b.loadSessions()
 	if len(b.sessions) != 1 {
 		t.Fatalf("got %d sessions, want 1 (the new chat)", len(b.sessions))
 	}
-	var newID string
-	for _, s := range b.sessions {
-		if s.ws != dir {
-			t.Fatalf("session %q bound to %q, want %q", s.id, s.ws, dir)
-		}
-		if strings.HasPrefix(s.title, "New chat") {
-			newID = s.id
-		}
+	if _, cached := b.threads[b.sessions[0].id]; cached {
+		t.Fatal("transcripts should load lazily, not at startup")
 	}
-	if newID == "" {
-		t.Fatal("the new chat session was not stored")
+	b.restoreSession()
+	tr2, ok := b.threads[b.sessions[0].id]
+	if !ok || len(tr2.rows) < 2 {
+		t.Fatalf("transcript not restored: ok=%v rows=%d", ok, len(tr2.rows))
 	}
-	tr, ok := b.threads[newID]
-	if !ok || len(tr.rows) < 2 {
-		t.Fatalf("transcript not restored: ok=%v rows=%d", ok, len(tr.rows))
+	if !strings.Contains(tr2.rows[0].text, "hello store") {
+		t.Fatalf("user row lost: %q", tr2.rows[0].text)
 	}
-	if !strings.Contains(tr.rows[0].text, "hello store") {
-		t.Fatalf("user row lost: %q", tr.rows[0].text)
+}
+
+// A legacy single-file store (sessions with embedded rows) migrates once:
+// each transcript lands in its own file and the original is kept as .bak.
+func TestSessionsLegacyMigration(t *testing.T) {
+	dir := t.TempDir()
+	a := newApp()
+	a.sessionsPath = filepath.Join(dir, "sessions.json")
+	a.ws = newWorkspace(dir)
+	a.newThread()
+	a.thread.draft = "legacy row"
+	a.send()
+
+	// Fold the per-session layout back into the legacy shape on disk.
+	st := sessionStore{}
+	idx, _ := os.ReadFile(a.sessionsPath)
+	json.Unmarshal(idx, &st)
+	type legacySession struct {
+		storedSession
+		Rows []storedRow `json:"rows"`
+	}
+	var legacy struct {
+		Sessions []legacySession `json:"sessions"`
+	}
+	trRaw, _ := os.ReadFile(filepath.Join(dir, "sessions", st.Sessions[0].ID+".json"))
+	var ts transcriptStore
+	json.Unmarshal(trRaw, &ts)
+	for _, ss := range st.Sessions {
+		legacy.Sessions = append(legacy.Sessions, legacySession{
+			storedSession: ss,
+			Rows:          ts.Rows,
+		})
+	}
+	lbuf, _ := json.Marshal(legacy)
+	if err := os.WriteFile(a.sessionsPath, lbuf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(filepath.Join(dir, "sessions"))
+
+	b := newApp()
+	b.sessionsPath = a.sessionsPath
+	b.ws = newWorkspace(dir)
+	b.loadSessions()
+	if len(b.sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(b.sessions))
+	}
+	b.restoreSession()
+	if tr, ok := b.threads[b.sessions[0].id]; !ok || len(tr.rows) < 2 {
+		t.Fatalf("legacy transcript not migrated: ok=%v", ok)
+	}
+	if _, err := os.Stat(a.sessionsPath + ".bak"); err != nil {
+		t.Fatal("the legacy file was not kept as .bak")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sessions")); err != nil {
+		t.Fatal("the per-session directory was not recreated")
 	}
 }
 

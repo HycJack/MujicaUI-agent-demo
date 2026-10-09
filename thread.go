@@ -35,9 +35,10 @@ func (a *app) threadView(c *ui.Context) {
 	})
 }
 
-// renderRow paints one transcript row by kind. The tool rows render the
-// real agent invocation stored on the row; the assistant rows render the
-// streamed thinking and text.
+// renderRow paints one transcript row by kind. One AI reply is one bubble:
+// its thinking and tool calls fold into a collapsible ThinkingBlock, and
+// the text renders as markdown once the reply completes. The standalone
+// tool-row kinds only remain for transcripts stored before the merge.
 func (a *app) renderRow(c *ui.Context, r *row) {
 	switch r.kind {
 	case rowTyping:
@@ -66,12 +67,25 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 		})
 	case rowReasoned:
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
-			if r.thinkText != "" {
-				chat.ThinkingBlock(c, &a.thread.think, chat.ThinkingBlockOptions{}, func() {
-					ui.Text(c, r.thinkText)
+			if r.thinkText != "" || len(r.tools) > 0 {
+				chat.ThinkingBlock(c, &r.thinkOpen, chat.ThinkingBlockOptions{
+					Thinking: r.streaming && r.text == "",
+					Started:  r.at,
+				}, func() {
+					ui.Column(c).Gap(8).Children(func() {
+						if r.thinkText != "" {
+							ui.Text(c, r.thinkText)
+						}
+						a.toolCards(c, r)
+					})
 				})
 			}
-			chat.StreamingText(c, r.text, chat.StreamingTextOptions{Streaming: a.llm.Busy && r.text != ""})
+			switch {
+			case r.streaming:
+				chat.StreamingText(c, r.text, chat.StreamingTextOptions{Streaming: r.text != ""})
+			case r.text != "":
+				chat.MarkdownView(c, r.text)
+			}
 			a.actions(c, r)
 		})
 	default:
@@ -81,6 +95,33 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 			}
 			a.actions(c, r)
 		})
+	}
+}
+
+// toolCards renders a reply's tool invocations in order: bash as a terminal
+// card (its stop button aborts the loop), write_file as a before/after
+// review card, everything else as a tool-call card.
+func (a *app) toolCards(c *ui.Context, r *row) {
+	runs := r.tools
+	if r.tool != nil {
+		runs = append([]*toolRun{r.tool}, runs...) // legacy stored rows
+	}
+	for _, t := range runs {
+		switch t.name {
+		case "bash":
+			// Changed requests an abort: stop the in-flight agent loop.
+			if agent.CommandExecutionCard(c, t.run, agent.CommandExecutionCardOptions{}).Changed() {
+				a.cancel()
+			}
+		case "write_file":
+			// The write already happened; the card is the review record.
+			agent.FileChangeCard(c, &t.decision, t.change, agent.FileChangeCardOptions{Preview: 4})
+		default:
+			agent.ToolCallCard(c, agent.ToolCall{
+				ID: t.callID, Name: t.name, Args: t.args, Result: t.result,
+				Error: t.errMsg, State: t.state, Duration: t.dur,
+			}, agent.ToolCallCardOptions{})
+		}
 	}
 }
 

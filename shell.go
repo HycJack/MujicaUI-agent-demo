@@ -292,15 +292,22 @@ func (a *app) openSession(id string) {
 		a.thread = t
 		return
 	}
+	a.loadTranscript(id) // transcripts load lazily from their own file
+	if t, ok := a.threads[id]; ok {
+		a.thread = t
+		return
+	}
 	a.thread = thread{mode: chat.ModeAgent} // never opened: start empty
 	a.persistSessions()
 }
 
 // saveSession stashes the working transcript under its session id so
-// switching away and back keeps what the user typed.
+// switching away and back keeps what the user typed, and flags the
+// transcript file for the next persist.
 func (a *app) saveSession() {
 	if a.sessionID != "" {
 		a.threads[a.sessionID] = a.thread
+		a.markDirty(a.sessionID)
 	}
 }
 

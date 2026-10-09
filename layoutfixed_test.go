@@ -39,7 +39,10 @@ func TestChatPaneLayout(t *testing.T) {
 	tst.Frame()
 	for _, s := range []string{
 		"The nightly export failed again. Find out why and fix the job.",
-		"The job died on a **quota error** at 02:14 — the archive bucket holds seven days of dumps. I raised the cap and re-ran it.",
+		// a1's answer, rendered as markdown (the ** markers are gone, the
+		// ordered list and the table build their own elements).
+		"The job died on a quota error at 02:14 — the archive bucket holds seven days of dumps.",
+		"Raised the retention cap in jobs/export-nightly.sh",
 	} {
 		r, ok := tst.Find(s)
 		if !ok || r.W <= 0 || r.H <= 0 {

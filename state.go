@@ -29,7 +29,9 @@ const (
 	rowDiff          // a reviewable multi-file diff
 )
 
-// row is one entry of the thread.
+// row is one entry of the thread. One AI reply is ONE row: its thinking,
+// tool calls and text all live here — thinking and tools fold into a
+// collapsible ThinkingBlock, the text renders as markdown once done.
 type row struct {
 	id        string
 	role      chat.MessageRole
@@ -38,7 +40,10 @@ type row struct {
 	llmText   string // what the LLM sees when it differs from text (attached file contents)
 	thinkText string // reasoning text collected while a reply streams
 	at        time.Time
-	tool      *toolRun // real agent tool invocation behind the card rows
+	tool      *toolRun   // legacy single-tool rows (transcripts stored before the merge)
+	tools     []*toolRun // this reply's tool calls, in execution order
+	thinkOpen bool       // the reply's ThinkingBlock collapse state
+	streaming bool       // the reply is still streaming (text renders plain)
 }
 
 // toolRun carries one agent tool invocation for the transcript cards: the
@@ -186,6 +191,8 @@ type app struct {
 	sessionID string
 	sessions  []session
 	threads   map[string]thread // in-flight transcripts, keyed by session
+	threaded  map[string]bool   // sessions that have a transcript on disk
+	dirty     map[string]bool   // transcripts changed since their last persist
 
 	// llm
 	llm           LLMSettings
@@ -230,6 +237,8 @@ func newApp() *app {
 	// they never touch disk).
 	a.ws = newWorkspace(homeDir())
 	a.threads = map[string]thread{}
+	a.threaded = map[string]bool{}
+	a.dirty = map[string]bool{}
 	a.provView = defaultProviderView()
 	a.thread = thread{mode: chat.ModeAgent}
 	return a

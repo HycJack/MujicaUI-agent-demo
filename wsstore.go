@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
 	"github.com/ZacharyZhang-NY/MujicaUI/input"
@@ -73,11 +74,7 @@ func (a *app) saveWsPrefs() {
 		log.Printf("atlas: workspace prefs not saved: %v", err)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(a.wsPrefsPath), 0o700); err != nil {
-		log.Printf("atlas: workspace prefs not saved: %v", err)
-		return
-	}
-	if err := os.WriteFile(a.wsPrefsPath, buf, 0o600); err != nil {
+	if err := writeFileAtomic(a.wsPrefsPath, buf); err != nil {
 		log.Printf("atlas: workspace prefs not saved: %v", err)
 	}
 }
@@ -113,7 +110,10 @@ func (a *app) touchRecent(path string) {
 	}
 }
 
-// storedRow / storedSession are the on-disk shapes of the transcript store.
+// storedRow / storedTool / storedSession are the on-disk shapes of the
+// transcript store. The index (sessions.json) holds only session metadata;
+// each session's transcript lives in its own file under sessions/, so one
+// long conversation never rewrites every other one.
 type storedRow struct {
 	ID        string           `json:"id"`
 	Role      chat.MessageRole `json:"role"`
@@ -122,6 +122,28 @@ type storedRow struct {
 	LLMText   string           `json:"llmText,omitempty"`
 	ThinkText string           `json:"thinkText,omitempty"`
 	At        time.Time        `json:"at"`
+	ThinkOpen bool             `json:"thinkOpen,omitempty"`
+	Tools     []*storedTool    `json:"tools,omitempty"`
+}
+
+// storedTool is one merged tool invocation of a reply row.
+type storedTool struct {
+	CallID   string             `json:"callId"`
+	Name     string             `json:"name"`
+	Args     string             `json:"args,omitempty"`
+	Result   string             `json:"result,omitempty"`
+	ErrMsg   string             `json:"errMsg,omitempty"`
+	State    agent.AgentState   `json:"state"`
+	Dur      time.Duration      `json:"dur,omitempty"`
+	Run      agent.CommandRun   `json:"run,omitempty"`
+	Decision agent.FileDecision `json:"decision,omitempty"`
+	Change   agent.FileChange   `json:"change,omitempty"`
+}
+
+// transcriptStore is one session's transcript file.
+type transcriptStore struct {
+	Mode chat.ChatMode `json:"mode,omitempty"`
+	Rows []storedRow   `json:"rows"`
 }
 
 type storedSession struct {
@@ -132,65 +154,169 @@ type storedSession struct {
 	Workspace string        `json:"workspace"`
 	Mode      chat.ChatMode `json:"mode,omitempty"`
 	Threaded  bool          `json:"threaded"`
-	Rows      []storedRow   `json:"rows,omitempty"`
+	// Rows only appears in the legacy single-file format; its presence
+	// triggers the one-time migration into per-session files.
+	LegacyRows []storedRow `json:"rows,omitempty"`
 }
 
 type sessionStore struct {
 	Sessions []storedSession `json:"sessions"`
 }
 
-// persistSessions writes every session — grouped by workspace, transcripts
-// included — to sessions.json.
+// sessionsDir is the per-session transcript directory next to the index.
+func (a *app) sessionsDir() string {
+	return filepath.Join(filepath.Dir(a.sessionsPath), "sessions")
+}
+
+// transcriptPath is one session's transcript file; ids are sanitized so a
+// hostile index cannot escape the directory.
+func (a *app) transcriptPath(id string) string {
+	var sb strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			sb.WriteRune(r)
+		default:
+			sb.WriteRune('_')
+		}
+	}
+	return filepath.Join(a.sessionsDir(), sb.String()+".json")
+}
+
+// writeFileAtomic replaces path with data: write a temp file, then rename.
+// A stale target with a broken ACL (the "Access is denied" class) is removed
+// once and the rename retried, so a bad file heals itself.
+func writeFileAtomic(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		if rm := os.Remove(path); rm == nil {
+			if err2 := os.Rename(tmp, path); err2 == nil {
+				return nil
+			}
+		}
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// storeRow projects a transcript row to its on-disk shape.
+func storeRow(r row) storedRow {
+	sr := storedRow{
+		ID: r.id, Role: r.role, Kind: r.kind, Text: r.text,
+		LLMText: r.llmText, ThinkText: r.thinkText, At: r.at, ThinkOpen: r.thinkOpen,
+	}
+	for _, t := range r.tools {
+		sr.Tools = append(sr.Tools, &storedTool{
+			CallID: t.callID, Name: t.name, Args: t.args, Result: t.result,
+			ErrMsg: t.errMsg, State: t.state, Dur: t.dur,
+			Run: t.run, Decision: t.decision, Change: t.change,
+		})
+	}
+	return sr
+}
+
+// loadRow restores a stored row (legacy rows keep their single tool field).
+func loadRow(sr storedRow) row {
+	r := row{
+		id: sr.ID, role: sr.Role, kind: sr.Kind, text: sr.Text,
+		llmText: sr.LLMText, thinkText: sr.ThinkText, at: sr.At, thinkOpen: sr.ThinkOpen,
+	}
+	for _, st := range sr.Tools {
+		r.tools = append(r.tools, &toolRun{
+			callID: st.CallID, name: st.Name, args: st.Args, result: st.Result,
+			errMsg: st.ErrMsg, state: st.State, dur: st.Dur,
+			run: st.Run, decision: st.Decision, change: st.Change,
+		})
+	}
+	return r
+}
+
+// persistSessions writes the session index plus every transcript marked
+// dirty since the last persist — one file per session.
 func (a *app) persistSessions() {
 	if a.sessionsPath == "" {
 		return
 	}
 	st := sessionStore{}
 	for _, s := range a.sessions {
-		ss := storedSession{ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned, Workspace: s.ws}
+		threaded := a.threaded[s.id]
+		mode := chat.ChatMode(0)
 		if s.id == a.sessionID {
 			// The live transcript may be ahead of the threads map (its rows
 			// are only copied there on session switches).
-			ss.Threaded, ss.Mode = true, a.thread.mode
-			for _, r := range a.thread.rows {
-				ss.Rows = append(ss.Rows, storedRow{
-					ID: r.id, Role: r.role, Kind: r.kind, Text: r.text,
-					LLMText: r.llmText, ThinkText: r.thinkText, At: r.at,
-				})
-			}
+			threaded, mode = true, a.thread.mode
 		} else if t, ok := a.threads[s.id]; ok {
-			ss.Threaded, ss.Mode = true, t.mode
-			for _, r := range t.rows {
-				ss.Rows = append(ss.Rows, storedRow{
-					ID: r.id, Role: r.role, Kind: r.kind, Text: r.text,
-					LLMText: r.llmText, ThinkText: r.thinkText, At: r.at,
-				})
-			}
+			threaded, mode = true, t.mode
 		}
-		st.Sessions = append(st.Sessions, ss)
+		st.Sessions = append(st.Sessions, storedSession{
+			ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned,
+			Workspace: s.ws, Threaded: threaded, Mode: mode,
+		})
 	}
 	buf, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		log.Printf("atlas: sessions not saved: %v", err)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(a.sessionsPath), 0o700); err != nil {
+	if err := writeFileAtomic(a.sessionsPath, buf); err != nil {
 		log.Printf("atlas: sessions not saved: %v", err)
-		return
 	}
-	if err := os.WriteFile(a.sessionsPath, buf, 0o600); err != nil {
-		log.Printf("atlas: sessions not saved: %v", err)
+	a.persistDirtyTranscripts()
+}
+
+// persistDirtyTranscripts writes each dirty session's transcript file and
+// clears the dirty marks.
+func (a *app) persistDirtyTranscripts() {
+	for id := range a.dirty {
+		t, ok := a.threads[id]
+		if id == a.sessionID {
+			t, ok = a.thread, true // the live transcript wins
+		}
+		if !ok {
+			delete(a.dirty, id)
+			continue
+		}
+		ts := transcriptStore{Mode: t.mode}
+		for _, r := range t.rows {
+			ts.Rows = append(ts.Rows, storeRow(r))
+		}
+		buf, err := json.MarshalIndent(ts, "", "  ")
+		if err == nil {
+			err = writeFileAtomic(a.transcriptPath(id), buf)
+		}
+		if err != nil {
+			log.Printf("atlas: transcript %s not saved: %v", id, err)
+			continue
+		}
+		a.threaded[id] = true
+		delete(a.dirty, id)
 	}
 }
 
-// loadSessions restores the persisted sessions and transcripts.
+// markDirty flags a session's transcript for the next persist.
+func (a *app) markDirty(id string) {
+	if id != "" && a.dirty != nil {
+		a.dirty[id] = true
+	}
+}
+
+// loadSessions restores the session index; transcripts load lazily when a
+// session is opened. A legacy single-file store (sessions with embedded
+// rows) migrates once into the per-session layout.
 func (a *app) loadSessions() {
 	if a.sessionsPath == "" {
 		return
 	}
 	buf, err := os.ReadFile(a.sessionsPath)
 	if err != nil {
-		return // first run: keep the in-memory seed
+		return // first run: nothing stored yet
 	}
 	var st sessionStore
 	if err := json.Unmarshal(buf, &st); err != nil {
@@ -198,22 +324,54 @@ func (a *app) loadSessions() {
 		return
 	}
 	a.sessions, a.threads = nil, map[string]thread{}
+	a.threaded, a.dirty = map[string]bool{}, map[string]bool{}
+	legacy := false
 	for _, ss := range st.Sessions {
 		a.sessions = append(a.sessions, session{
 			id: ss.ID, title: ss.Title, updated: ss.Updated, pinned: ss.Pinned, ws: ss.Workspace,
 		})
-		if !ss.Threaded {
-			continue // never opened: starts empty when selected
+		a.threaded[ss.ID] = ss.Threaded
+		if len(ss.LegacyRows) > 0 {
+			legacy = true
+			t := thread{mode: ss.Mode}
+			for _, sr := range ss.LegacyRows {
+				t.rows = append(t.rows, loadRow(sr))
+			}
+			a.threads[ss.ID] = t
+			a.dirty[ss.ID] = true // re-homed into its own file on next persist
 		}
-		t := thread{mode: ss.Mode}
-		for _, sr := range ss.Rows {
-			t.rows = append(t.rows, row{
-				id: sr.ID, role: sr.Role, kind: sr.Kind, text: sr.Text,
-				llmText: sr.LLMText, thinkText: sr.ThinkText, at: sr.At,
-			})
-		}
-		a.threads[ss.ID] = t
 	}
+	if legacy {
+		a.persistSessions()
+		if err := writeFileAtomic(a.sessionsPath+".bak", buf); err == nil {
+			os.Remove(a.sessionsPath + ".tmp")
+		}
+		log.Printf("atlas: migrated the single-file session store into %s", a.sessionsDir())
+	}
+}
+
+// loadTranscript reads one session's transcript file into the threads cache.
+func (a *app) loadTranscript(id string) {
+	if a.sessionsPath == "" || id == "" {
+		return
+	}
+	if _, ok := a.threads[id]; ok {
+		return
+	}
+	buf, err := os.ReadFile(a.transcriptPath(id))
+	if err != nil {
+		return // never opened, or lost: starts empty
+	}
+	var ts transcriptStore
+	if err := json.Unmarshal(buf, &ts); err != nil {
+		log.Printf("atlas: transcript %s ignored: %v", id, err)
+		return
+	}
+	t := thread{mode: ts.Mode}
+	for _, sr := range ts.Rows {
+		t.rows = append(t.rows, loadRow(sr))
+	}
+	a.threads[id] = t
 }
 
 // openWorkspace switches the session to dir: it validates the directory,
@@ -268,6 +426,7 @@ func (a *app) restoreSession() {
 		}
 		a.sessionID = s.id
 		a.conv = chat.ChatConversation{ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned}
+		a.loadTranscript(s.id) // transcripts load lazily from their own file
 		if t, ok := a.threads[s.id]; ok {
 			a.thread = t
 		} else {

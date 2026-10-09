@@ -138,9 +138,11 @@ func (a *app) send() {
 	a.thread.rows = append(a.thread.rows,
 		row{id: fmt.Sprintf("u%d", userIdx), role: chat.MessageUser, text: text, llmText: llmText, at: now})
 	a.thread.rows = append(a.thread.rows,
-		row{id: fmt.Sprintf("a%d", userIdx+1), role: chat.MessageAssistant, kind: rowReasoned, at: now.Add(time.Millisecond)})
+		row{id: fmt.Sprintf("a%d", userIdx+1), role: chat.MessageAssistant, kind: rowReasoned,
+			at: now.Add(time.Millisecond), streaming: true})
 	a.thread.draft = ""
 	a.thread.list.ScrollToEnd()
+	a.markDirty(a.sessionID) // the user row lands in its transcript file
 	a.persistSessions()
 	a.startStream(userIdx)
 }
@@ -174,11 +176,13 @@ func (a *app) attachedFilesBlock() (names, block string) {
 }
 
 // startStream launches the pi-ai agent loop for the already-appended user
-// row at userIdx. The assistant row sits directly after it; every turn the
-// loop takes — thinking, text, tool executions — lands in the transcript as
-// its own rows through a.redraw.
+// row at userIdx. The whole reply — every turn's thinking, text and tool
+// executions — folds into the ONE assistant row send() appended, so a
+// multi-step agent answer shows as a single message with a collapsible
+// thinking-and-tools block.
 func (a *app) startStream(userIdx int) {
 	assistantIdx := userIdx + 1
+	curID := fmt.Sprintf("a%d", assistantIdx) // the row send() appended
 	a.llm.Busy = true
 	a.llm.LastError = ""
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,6 +200,7 @@ func (a *app) startStream(userIdx int) {
 			a.redraw(func() {
 				a.llm.Busy = false
 				a.cancelFn = nil
+				a.endStreamingRow(curID)
 				a.thread.list.ScrollToEnd()
 				a.persistSessions()
 			})
@@ -216,8 +221,7 @@ func (a *app) startStream(userIdx int) {
 		stream := agent.AgentLoop(ctx, a.historyMessages(), cfg)
 		s := &agentStream{
 			app:       a,
-			curID:     fmt.Sprintf("a%d", assistantIdx), // the row send() appended
-			rowSeq:    assistantIdx,
+			curID:     curID,
 			toolStart: map[string]time.Time{},
 		}
 		if _, err := stream.ForEach(ctx, s.onEvent); err != nil && ctx.Err() == nil {
@@ -226,52 +230,48 @@ func (a *app) startStream(userIdx int) {
 	}()
 }
 
+// endStreamingRow clears a reply's streaming flag so its text renders as
+// markdown from then on (UI thread).
+func (a *app) endStreamingRow(id string) {
+	for i := range a.thread.rows {
+		if a.thread.rows[i].id == id {
+			a.thread.rows[i].streaming = false
+			return
+		}
+	}
+}
+
 // agentStream buffers the agent loop's deltas on the streaming goroutine and
-// lands every state change on the UI thread through a.redraw. Rows are
-// tracked by id (never by index): the ids are minted here on the goroutine
-// and the UI thread only ever sees captured strings, so there is no shared
-// index to race on.
+// lands every state change on the UI thread through a.redraw. The whole
+// reply streams into ONE row tracked by id (never by index): the id is
+// minted on the goroutine and the UI thread only ever sees the captured
+// string, so there is no shared index to race on.
 type agentStream struct {
 	app       *app
-	curID     string // transcript row the current assistant message streams into
-	rowSeq    int    // assistant-row id counter (goroutine-owned)
-	toolSeq   int    // tool-row id counter (goroutine-owned)
-	started   bool   // the first assistant message streams into send()'s row
+	curID     string // the one transcript row the whole reply streams into
+	toolStart map[string]time.Time
+	started   bool // a turn beyond the first is running (text joins with a blank line)
 	think     strings.Builder
 	body      strings.Builder
-	toolStart map[string]time.Time
 }
 
 // onEvent folds one agent event into the transcript.
 func (s *agentStream) onEvent(evt agent.AgentEvent) error {
 	switch e := evt.(type) {
 	case agent.EventMessageStart:
-		if s.started {
-			// A later turn (after tool results): a fresh assistant row.
-			s.think.Reset()
-			s.body.Reset()
-			s.rowSeq++
-			id := fmt.Sprintf("a%d", s.rowSeq)
-			s.app.redraw(func() {
-				s.app.thread.rows = append(s.app.thread.rows, row{
-					id: id, role: chat.MessageAssistant, kind: rowReasoned, at: time.Now(),
-				})
-				s.app.thread.list.ScrollToEnd()
-			})
-			s.curID = id
-		} else {
-			s.started = true
-			s.think.Reset()
-			s.body.Reset()
+		// Later turns (after tool results) keep filling the same reply:
+		// their text joins the body after a blank line.
+		s.think.Reset()
+		if s.started && s.body.Len() > 0 {
+			s.body.WriteString("\n\n")
 		}
+		s.started = true
 	case agent.EventMessageUpdate:
 		s.onAssistantEvent(e.AssistantEvent)
 	case agent.EventToolExecStart:
 		s.toolStart[e.ToolCallID] = time.Now()
 		callID, name, args := e.ToolCallID, e.ToolName, string(e.Args)
-		s.toolSeq++
-		id := fmt.Sprintf("t%d", s.toolSeq)
-		s.app.redraw(func() { s.app.appendToolRow(id, callID, name, args) })
+		s.app.redraw(func() { s.app.appendTurnTool(s.curID, callID, name, args) })
 	case agent.EventToolExecEnd:
 		dur := time.Since(s.toolStart[e.ToolCallID])
 		result, isErr, callID := string(e.Result), e.IsError, e.ToolCallID
@@ -308,77 +308,80 @@ func (s *agentStream) setRow(fn func(*row)) {
 	}
 }
 
-// toolKind maps a tool name to its transcript card row kind.
-func toolKind(name string) kind {
-	switch name {
-	case "bash":
-		return rowCommand
-	case "write_file":
-		return rowDiff
-	default:
-		return rowTools
-	}
-}
-
-// appendToolRow adds a running card row for a tool execution (UI thread).
-func (a *app) appendToolRow(id, callID, name, args string) {
+// appendTurnTool adds a running tool invocation to the reply's merged card
+// block (UI thread).
+func (a *app) appendTurnTool(rowID, callID, name, args string) {
 	t := &toolRun{callID: callID, name: name, args: args, state: muiagent.AgentRunning}
 	if name == "bash" {
 		var p toolParams
 		_ = json.Unmarshal([]byte(args), &p)
 		t.run = muiagent.CommandRun{Command: p.Command, Dir: a.ws.root, Running: true}
 	}
-	a.thread.rows = append(a.thread.rows, row{
-		id: id, role: chat.MessageAssistant, kind: toolKind(name),
-		at: time.Now(), tool: t,
-	})
-	a.thread.list.ScrollToEnd()
-}
-
-// finishToolRow fills a tool card's result (UI thread).
-func (a *app) finishToolRow(callID, result string, isErr bool, dur time.Duration) {
 	for i := range a.thread.rows {
-		t := a.thread.rows[i].tool
-		if t == nil || t.callID != callID {
+		if a.thread.rows[i].id != rowID {
 			continue
 		}
-		t.state = muiagent.AgentDone
-		t.dur = dur
-		if isErr {
-			t.errMsg = toolResultText(result)
-		} else {
-			t.result = result
-		}
-		switch t.name {
-		case "bash":
-			t.run.Running = false
-			t.run.Duration = dur
-			t.run.Output = toolResultText(result)
-			if isErr {
-				t.run.ExitCode = 1
-			}
-		case "write_file":
-			var d struct {
-				Path    string `json:"path"`
-				Old     string `json:"old"`
-				New     string `json:"new"`
-				Details struct {
-					Path string `json:"path"`
-					Old  string `json:"old"`
-					New  string `json:"new"`
-				} `json:"details"`
-			}
-			if json.Unmarshal([]byte(result), &d) == nil {
-				path, old, new := d.Details.Path, d.Details.Old, d.Details.New
-				if path == "" {
-					path, old, new = d.Path, d.Old, d.New
-				}
-				t.change = muiagent.FileChange{Path: path, Old: old, New: new}
-			}
-		}
+		a.thread.rows[i].tools = append(a.thread.rows[i].tools, t)
 		a.thread.list.ScrollToEnd()
 		return
 	}
+}
+
+// finishToolRow fills a tool card's result (UI thread). It searches every
+// row's merged tool list, plus the legacy single-tool rows.
+func (a *app) finishToolRow(callID, result string, isErr bool, dur time.Duration) {
+	for i := range a.thread.rows {
+		for _, t := range a.thread.rows[i].toolsOf() {
+			if t.callID != callID {
+				continue
+			}
+			t.state = muiagent.AgentDone
+			t.dur = dur
+			if isErr {
+				t.errMsg = toolResultText(result)
+			} else {
+				t.result = result
+			}
+			switch t.name {
+			case "bash":
+				t.run.Running = false
+				t.run.Duration = dur
+				t.run.Output = toolResultText(result)
+				if isErr {
+					t.run.ExitCode = 1
+				}
+			case "write_file":
+				var d struct {
+					Path    string `json:"path"`
+					Old     string `json:"old"`
+					New     string `json:"new"`
+					Details struct {
+						Path string `json:"path"`
+						Old  string `json:"old"`
+						New  string `json:"new"`
+					} `json:"details"`
+				}
+				if json.Unmarshal([]byte(result), &d) == nil {
+					path, old, new := d.Details.Path, d.Details.Old, d.Details.New
+					if path == "" {
+						path, old, new = d.Path, d.Old, d.New
+					}
+					t.change = muiagent.FileChange{Path: path, Old: old, New: new}
+				}
+			}
+			a.thread.list.ScrollToEnd()
+			return
+		}
+	}
+}
+
+// toolsOf lists a row's tool invocations: the merged list, with the legacy
+// single-tool field first when present.
+func (r *row) toolsOf() []*toolRun {
+	if r.tool != nil {
+		return append([]*toolRun{r.tool}, r.tools...)
+	}
+	return r.tools
 }
 
 // toolResultText extracts the first text block of a marshaled AgentToolResult.
@@ -418,6 +421,7 @@ func (a *app) streamError(idx int, err error) {
 			r := &a.thread.rows[idx]
 			r.text = "⚠ " + msg
 			r.kind = rowPlain
+			r.streaming = false
 		}
 		a.thread.list.ScrollToEnd()
 		a.persistSessions()
@@ -441,6 +445,7 @@ func (a *app) streamErrorRow(id string, err error) {
 			}
 			a.thread.rows[i].text = "⚠ " + msg
 			a.thread.rows[i].kind = rowPlain
+			a.thread.rows[i].streaming = false
 			break
 		}
 		a.thread.list.ScrollToEnd()
@@ -457,8 +462,11 @@ func (a *app) streamErrorRow(id string, err error) {
 // don't block. Real windows stream instead.
 func (a *app) finishStream(idx int) {
 	if a.redraw == nil {
-		if len(a.thread.rows) > idx && a.thread.rows[idx].text == "" {
-			a.thread.rows[idx].text = "(no LLM backend off-window)"
+		if len(a.thread.rows) > idx {
+			if a.thread.rows[idx].text == "" {
+				a.thread.rows[idx].text = "(no LLM backend off-window)"
+			}
+			a.thread.rows[idx].streaming = false
 		}
 		a.llm.Busy = false
 		a.clearCancel()

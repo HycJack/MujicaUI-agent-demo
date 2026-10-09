@@ -134,13 +134,13 @@ require (
 | `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText` 与 `tool *toolRun`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
 | `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树、工作区、状态栏；快捷键；会话切换。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`（思考/文本/工具调用/命令执行/文件变更五类卡片，全部读真实 `row.tool` 数据）、`actions`、`composer`。 |
-| `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（事件 → 行：思考/文本增量进当前行，`ToolExecStart/End` 生成/填充工具卡片行，后续轮次追加新助手行）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
+| `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（整条回复进一行：思考/文本增量刷新当前行，工具调用 `appendTurnTool` 进该行的卡片块，跨轮正文空行衔接）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
 | `agenttools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以工作区为根，`write_file` 自动建父目录。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
 | `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查），`settings.json` 读写与回退。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`wsEnsureLoaded`（Outline 行内触发）、`readCapped` 文件预览（256 KiB 上限）、`attachFile` 附加到对话、`reloadWorkspace`。 |
-| `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、`sessions.json`（按工作区分组的全部会话与对话记录）、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
+| `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、会话索引 `sessions.json`（仅元数据）+ **每会话一个转录文件** `sessions/<id>.json`（懒加载、脏标记增量写）、`writeFileAtomic`（临时文件 + rename，坏 ACL 目标自愈）、旧单文件格式一次性迁移、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
 | `drawer.go` | **代码抽屉**：右侧 `overlay.Drawer`（宽 720）大尺寸查看器——树点击打开文件内容（Raw/Fmt + 附加），仓库面板 `maximize` 把 Diff/源码放大进来；内容高度按窗高推导（抽屉内容区是 Scroll，grow 会塌）。 |
 | `vcs.go` | **真实 git 后端**：`runGit`（15s 超时）、`parseStatus`/`parseBranches`/`parseLog`（porcelain 解析）、`collectVCS` 快照、`fileVersions`（HEAD / index / worktree 三方取版本，二进制探测）、`vcsAction`（stage/unstage）、`commitStaged`（含 amend）、`checkoutBranch`/`createBranch`、`loadSelectedDiff`。 |
 | `repo.go` | 右栏检视器：Workspace 标签（`ui.Outline` 目录树：自定义行 + 右键菜单附加/查看/复制路径）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
@@ -379,7 +379,8 @@ Column (Fill, Background)
 
 1. 取 `strings.TrimSpace(draft)`，空或 `a.llm.Busy` 则返回。
 2. 附件折叠进 `llmText`（见 §10）后追加用户行。
-3. 追加一条空的 `rowReasoned` 助理行，`list.ScrollToEnd()`，`persistSessions()`。
+3. 追加一条**空的 `rowReasoned` 助理行（`streaming=true`）**——整条回复（所有轮次的
+   思考、工具调用、正文）都进这一行，`list.ScrollToEnd()`，`persistSessions()`。
 4. `startStream(userIdx)`：置 `a.llm.Busy=true`，建 `context.WithCancel` 存到
    `a.cancelFn`，起一个 goroutine：
    - `resolveModel()` 解析模型；组装 `agent.AgentLoopConfig{Model, SystemPrompt,
@@ -388,18 +389,23 @@ Column (Fill, Background)
    - `agent.AgentLoop(ctx, historyMessages(), cfg)` 启动循环，`stream.ForEach` 消费
      `AgentEvent`（由 `agentStream` 承接，行 id 只在 goroutine 侧铸造，UI 线程只见
      捕获的字符串，无共享索引竞争）：
-     - `EventMessageStart`：首轮复用 `send()` 追加的行；后续轮次（工具结果之后）
-       追加新的 `rowReasoned` 助理行。
+     - `EventMessageStart`：**不建新行**——后续轮次（工具结果之后）继续填同一条
+       回复；正文跨轮以空行衔接，思考跨轮累加。
      - `EventMessageUpdate` 内的 `EventThinkingDelta` / `EventTextDelta`：增量刷新
        当前行（`a.redraw` 按值传字符串）。
-     - `EventToolExecStart{ToolCallID, ToolName, Args}`：按工具名追加卡片行
-       （`bash`→`rowCommand`、`write_file`→`rowDiff`、其余→`rowTools`），状态 Running。
-     - `EventToolExecEnd{Result, IsError}`：按 callID 找到卡片行，落定结果/错误/耗时；
-       bash 填 `CommandRun`（输出 + 退出码），write_file 从 Details 解析 old/new 填
-       `FileChange`。
+     - `EventToolExecStart{ToolCallID, ToolName, Args}`：`appendTurnTool` 把工具
+       追加进**当前回复行的 `tools` 卡片块**（bash 预填 `CommandRun`），状态 Running。
+     - `EventToolExecEnd{Result, IsError}`：按 callID 在各行 `tools`（含旧版单工具
+       字段）里找到卡片，落定结果/错误/耗时；bash 填 `CommandRun`（输出 + 退出码），
+       write_file 从 Details 解析 old/new 填 `FileChange`。
      - `EventAgentEnd`：循环收尾。
-   - 完成后（defer）`a.llm.Busy=false`、清 `cancelFn`、`ScrollToEnd`、`persistSessions()`。
+   - 完成后（defer）`a.llm.Busy=false`、清 `cancelFn`、`endStreamingRow`（清
+     `streaming`，正文从流式纯文本切换为 Markdown 渲染）、`ScrollToEnd`、
+     `persistSessions()`。
 
+> **一条回复一个气泡**：思考 + 工具调用折叠进该行的 `ThinkingBlock`（每行独立的
+> `thinkOpen` 开合状态），正文在块下方；流式期间正文走 `StreamingText`（纯文本 +
+> 光标），完成后走 `chat.MarkdownView`（标题/列表/表格/代码块全量渲染）。
 > 线程约定：UI 线程持有全部状态。goroutine 只缓冲局部字符串，经
 > `a.redraw(fn)`（即 `win.Update`）把 `fn` 调度回 UI 线程再改状态；闭包**不能**捕获
 > `strings.Builder`（`win.Update` 不等待 `fn`，闭包可能在 goroutine 退出后执行）。
@@ -481,15 +487,15 @@ Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直�
 
 ### 7.3 `renderRow(c, r)`
 
-按 `kind` 渲染（工具卡片全部读 `r.tool` 的真实调用数据）：
+**一条 AI 回复 = 一个气泡**（`rowReasoned`）：思考 + 工具调用折叠进可收起的
+`ThinkingBlock`（每行独立 `thinkOpen`），正文在块下方——流式期间 `StreamingText`
+（纯文本 + 光标），完成后 `chat.MarkdownView`（标题/有序无序列表/表格/代码块）。
 
 | kind | 组件 |
 | --- | --- |
 | `rowTyping` | `chat.TypingIndicator(c, "Atlas")` |
-| `rowTools` | `MessageBubble` → `agent.ToolCallCard{ID, Name, Args, Result, Error, State, Duration}` |
-| `rowCommand` | `MessageBubble` → `agent.CommandExecutionCard(run)`；`Changed()`（用户点停止）→ `a.cancel()` 中止 agent 循环 |
-| `rowDiff` | `MessageBubble` → `agent.FileChangeCard(&decision, change, {Preview:4})` |
-| `rowReasoned` | `MessageBubble` → `chat.ThinkingBlock(&think,…)` + `chat.StreamingText(Streaming:true)` + `actions` |
+| `rowReasoned` | `MessageBubble` → [`ThinkingBlock(&r.thinkOpen, {Thinking: streaming, Started: at})`：思考文本 + `toolCards(r)`（bash→`CommandExecutionCard` 可中止、write_file→`FileChangeCard`、其余→`ToolCallCard`）] + 正文（`StreamingText` / `MarkdownView`）+ `actions` |
+| `rowTools` / `rowCommand` / `rowDiff` | **旧版独立工具行**（合并前存储的转录仍可显示），渲染分支保留 |
 | 默认 | `MessageBubble` → `chat.MarkdownView(text)` + `actions` |
 
 助理消息的 `MessageBubbleOptions{Name:"Atlas"}`。
@@ -681,7 +687,8 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 | --- | --- |
 | `settings.json` | LLM 配置（原有，不变） |
 | `workspace.json` | `{current, recents[]}` —— 当前工作区 + 最近列表（去重、上限 6，载入时当前根置顶） |
-| `sessions.json` | `{sessions:[{id,title,updated,pinned,workspace,mode,threaded,rows[]}]}` —— 全部工作区的会话与对话记录；`threaded` 标记是否存过线程（未打开过的会话选中时给空线程/欢迎页） |
+| `sessions.json` | `{sessions:[{id,title,updated,pinned,workspace,mode,threaded}]}` —— 会话**索引**（仅元数据，不含对话内容） |
+| `sessions/<id>.json` | `{mode, rows[]}` —— **每个会话一个转录文件**（含合并的工具调用数据），打开会话时懒加载；`persistSessions` 只写索引 + 脏标记的转录（`saveSession`/`send`/流结束置脏）；旧的单文件格式（索引内嵌 rows）启动时一次性迁移到本布局，原文件保留为 `sessions.json.bak` |
 
 **写入时机**：`newThread` / `openSession` / `send`（用户行落库）/ `applyReply`
 （回复完成）/ `streamError` / `openWorkspace`。`persistSessions` 对当前会话取
@@ -744,9 +751,9 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 ## 12. 交互清单（验收点）
 
 - [ ] **首跑无种子**：会话列表为空、显示欢迎页；`New chat` 创建第一条会话。
-- [ ] 输入一句话回车 → 用户行 + 助理行流式思考/正文；agent 需要时**真实执行工具**：
-  bash 命令出现终端卡（输出/退出码/耗时）、写文件出现 before/after 评审卡、
-  读文件出现工具调用卡；多轮时每轮各占一行；列表滚到底。
+- [ ] 输入一句话回车 → 用户行 + **一条助手消息**：思考与工具调用折叠在同一气泡的
+  可收起块里（bash 终端卡 / 写文件评审卡 / 读文件工具卡），正文流式输出、完成后按
+  **Markdown 渲染**（列表、表格、代码块）；列表滚到底。
 - [ ] `New chat` / ⌘N → 清空到欢迎页；能力卡示例可填入草稿；starter chip 可即发。
 - [ ] 会话列表切换 → 内容随之变化；切走再切回保留草稿。
 - [ ] **侧栏是 workspace→session 两级树**：当前工作区节点自动展开、其会话嵌套在
@@ -840,18 +847,22 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 11. **`TestWsPrefsRoundtrip` / `TestSessionsRoundtrip` / `TestOpenWorkspace` /
     `TestSidebarFiltersSessions` / `TestWorkspaceDialog` / `TestHomeDirDefault`**
     （`wsstore_test.go`）—— `workspace.json` 往返（当前根 + recents 置顶）；
-    `sessions.json` 往返（含在途会话的行、全部会话绑定工作区）；切换工作区的
-    校验/重根/会话恢复/recents；侧栏树上其它工作区默认折叠、其会话不出现；
-    对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
+    **会话索引 + 每会话转录文件**往返（索引不含 rows、转录懒加载、打开即从
+    `sessions/<id>.json` 恢复）、**旧单文件格式一次性迁移**（转录拆分、原文件
+    留 .bak）；切换工作区的校验/重根/会话恢复/recents；侧栏树上其它工作区默认
+    折叠、其会话不出现；对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
 12. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
    且两条关闭路径都写出 `settings.json`（`configPath` 指向临时目录，不碰真实配置）。
 13. **`TestAgentToolsBash` / `TestAgentToolsReadWrite` / `TestAgentCardsRender` /
-   `TestShellWrapper`**（`agenttools_test.go`）—— bash 真实执行（echo 回显、失败命令
-   带非零退出码）；read/write 往返（缺失文件报错、Details 携带 old/new、覆盖时 Old
-   为旧内容）；三类工具卡片行 + 思考行 headless 渲染；平台 shell 包装正确。
+   `TestAgentTurnsMergeIntoOneRow` / `TestShellWrapper`**（`agenttools_test.go`）——
+   bash 真实执行（echo 回显、失败命令带非零退出码）；read/write 往返（缺失文件
+   报错、Details 携带 old/new、覆盖时 Old 为旧内容）；三类工具卡片行 + 思考行
+   headless 渲染；**一次回复合并为一行**（工具调用进该行卡片块、不建新行、完成后
+   清 streaming）；平台 shell 包装正确。
 14. **`TestChatPaneLayout`**（`layoutfixed_test.go`）—— 用 `newConversationApp()`
-   夹具（`convfixture_test.go`：用户行 + 思考行 + bash 卡 + 工具卡 + 变更卡）回归
-   Row/Stretch 布局塌陷；首帧末行可见、上滚后首行可见。
+   夹具（`convfixture_test.go`：一条含思考 + 三个工具卡 + Markdown 列表/表格正文
+   的合并回复）回归 Row/Stretch 布局塌陷；首帧末行可见、上滚后首行与 Markdown
+   元素可见。
 
 ---
 

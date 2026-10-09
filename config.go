@@ -56,11 +56,7 @@ func (a *app) saveSettings() {
 	if err != nil {
 		panic("atlas: marshal settings: " + err.Error()) // program error: fail fast
 	}
-	if err := os.MkdirAll(filepath.Dir(a.configPath), 0o700); err != nil {
-		log.Printf("atlas: settings not saved: %v", err)
-		return
-	}
-	if err := os.WriteFile(a.configPath, data, 0o600); err != nil {
+	if err := writeFileAtomic(a.configPath, data); err != nil {
 		log.Printf("atlas: settings not saved: %v", err)
 		return
 	}

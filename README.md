@@ -34,10 +34,11 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 
 - **三栏工作台** —— 会话树（左，⌘B 折叠）、对话线程（中）、检视器（右，⌘J 折叠）；
   全部由 MyGo 弹性布局原语拼装，标题栏与状态栏齐备。
-- **真实 agent 循环（工具执行）** —— pi-ai-go 的 `agent.AgentLoop`：流式正文与思维链之外，
-  agent 可**真实执行** `bash`（终端卡：命令 / 输出 / 退出码 / 耗时，可点停止）、
-  `read_file`（工具调用卡）、`write_file`（before/after 文件变更评审卡），多轮工具
-  调用每轮各占一行；无窗口（测试）环境下同步落定占位回复，保持确定性。
+- **真实 agent 循环（工具执行）** —— pi-ai-go 的 `agent.AgentLoop`：**一次回复一个
+  消息气泡**——思考与工具调用折叠进可收起的块（`bash` 终端卡：命令 / 输出 / 退出码 /
+  耗时，可点停止；`read_file` 工具调用卡；`write_file` before/after 评审卡），正文
+  流式输出、完成后按 **Markdown 渲染**（标题 / 有序无序列表 / 表格 / 代码块）；
+  无窗口（测试）环境下同步落定占位回复，保持确定性。
 - **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录）；标题栏
   `folder` 按钮**直达右侧目录树面板**；Workspace 标签浏览真实目录（懒加载展开、
   目录优先排序、跳过 `.git` / `node_modules` 等噪音）；**点击文件滑出右侧大抽屉**
@@ -48,9 +49,13 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   展开/折叠，点会话打开（属于其它工作区时自动先切换过去）；末行 "Open workspace…"
   手输入口 + `New chat` 按钮。**首跑无任何演示会话**——空树 + 欢迎页，与真实
   agent 控制台一致。
-- **数据持久化** —— 用户配置目录下三个 JSON：`settings.json`（LLM 配置，含
-  API Key）、`workspace.json`（当前工作区 + 最近列表）、`sessions.json`
-  （**所有工作区的会话与完整对话记录**），重启后原样恢复。
+- **数据持久化** —— 用户配置目录（Windows 为 `%AppData%\MujicaUI-agent-demo\`，
+  **不是 exe 所在目录**）下：`settings.json`（LLM 配置，含 API Key）、
+  `workspace.json`（当前工作区 + 最近列表）、`sessions.json`（会话**索引**）+
+  **每个会话一个转录文件** `sessions\<id>.json`（打开会话时懒加载，保存只写索引 +
+  有改动的转录，长对话不再互相拖累）；所有写入走**临时文件 + 原子替换**，遇到
+  坏 ACL 的旧文件自动删除重写（修复 "Access is denied"）；旧的单文件会话存储
+  启动时自动迁移，原文件保留为 `sessions.json.bak`。重启后原样恢复。
 - **文件附加到对话** —— **在目录树的文件上右键 → "Add to conversation"**（菜单里
   还有 "Open in viewer" / "Copy path"），或用代码抽屉 / 变更列表的按钮把文件加入
   输入框上方的上下文 chips；发送时文件内容自动折叠进 LLM 消息（单文件 64 KiB 上限，
@@ -82,7 +87,8 @@ go run .
 启动后在标题栏点 **Provider settings** 图标（或 ⌘K → `Providers`）填入你的
 API key 即可开始对话；配置在对话框打开期间**实时保存**到用户配置目录
 （Windows 为 `%AppData%\MujicaUI-agent-demo\` 下的 `settings.json`、
-`workspace.json`、`sessions.json`），下次启动自动恢复工作区、会话与全部对话。
+`workspace.json` 与会话存储 `sessions.json` + `sessions\`），下次启动自动恢复
+工作区、会话与全部对话。
 
 ## Build 构建
 
@@ -111,14 +117,14 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 | `main.go` | 入口：窗口创建、心跳 goroutine、`App.Run()` |
 | `state.go` | 数据模型（`app` / `thread` / `row` + `toolRun` / `repo` / `session` / `LLMSettings`） |
 | `shell.go` | 外壳布局：标题栏（含目录树直达按钮）、workspace→session 两级会话树、工作区、状态栏、快捷键 |
-| `thread.go` | 对话线程：消息列表、思考/工具调用/命令执行/文件变更卡片、输入区 |
-| `llm.go` | pi-ai-go **agent 循环**集成：模型解析、多轮工具执行事件 → 对话行、中止与错误处理 |
+| `thread.go` | 对话线程：消息列表、**一条回复一个气泡**（思考+工具调用折叠块、Markdown 正文）、输入区 |
+| `llm.go` | pi-ai-go **agent 循环**集成：模型解析、整条回复合并进一行（跨轮工具执行）、中止与错误处理 |
 | `agenttools.go` | agent 工具集：`bash` / `read_file` / `write_file`（以工作区为根真实执行） |
 | `settings.go` | Settings 模态框：Providers / Agent 两个分区（打开期间实时保存） |
 | `config.go` | 配置持久化：`settings.json` 的加载与保存 |
 | `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 文件附加到对话 |
 | `drawer.go` | 代码抽屉：右侧 720 宽大尺寸查看器（文件内容 / Diff / 源码，Raw/Fmt 格式化） |
-| `wsstore.go` | 工作区存储：默认主目录、目录切换对话框、`workspace.json` / `sessions.json` 持久化 |
+| `wsstore.go` | 工作区存储：默认主目录、目录切换对话框、`workspace.json` + 会话索引/每会话转录文件（原子写、懒加载、旧格式迁移） |
 | `vcs.go` | 真实 git 后端：status / branch / log 解析、stage / unstage / commit / checkout |
 | `repo.go` | 右栏检视器：Workspace 树（文件右键附加/查看/复制路径）/ Repository（真实分支、变更、提交、Diff / 源码） |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips |
