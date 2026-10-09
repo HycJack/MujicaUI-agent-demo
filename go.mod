@@ -1,4 +1,4 @@
-module mujicaui-agent-demo
+module crux-agent
 
 go 1.27.1
 

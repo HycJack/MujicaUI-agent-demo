@@ -1,52 +1,53 @@
-package main
-
-// mdparse.go parses the markdown subset Atlas replies use into blocks:
+// Package md parses the markdown subset agent replies use into blocks:
 // headings, prose paragraphs, lists, quotes, tables, fenced/indented code
-// and rules. Parsing is separate from rendering so a row's blocks can be
-// cached on its element (ui.Local in mdview.go) and rebuilt as native
-// elements every frame.
+// and rules. Parsing (this package) is separate from rendering (the UI
+// layer's mdview.go) so a row's blocks can be cached on its element
+// (ui.Local) and rebuilt as native elements every frame.
+package md
 
 import "strings"
 
-type mdKind uint8
+// Kind selects how a block renders.
+type Kind uint8
 
 const (
-	mdPara    mdKind = iota // one selectable prose run (paragraphs joined by \n)
-	mdHeading               // # / ## / ###
-	mdList                  // bullet and ordered items
-	mdQuote                 // > quote lines merged into one block
-	mdTable                 // | a | b | grid with a separator line
-	mdCode                  // fenced ``` block (or a 4-column indented run)
-	mdRule                  // --- / *** / ___
+	KindPara    Kind = iota // one selectable prose run (paragraphs joined by \n)
+	KindHeading             // # / ## / ###
+	KindList                // bullet and ordered items
+	KindQuote               // > quote lines merged into one block
+	KindTable               // | a | b | grid with a separator line
+	KindCode                // fenced ``` block (or a 4-column indented run)
+	KindRule                // --- / *** / ___
 )
 
-// mdItem is one list entry; num is empty for a bullet.
-type mdItem struct {
-	depth int // indent level, two source columns per level
-	num   string
-	text  string
+// Item is one list entry; Num is empty for a bullet.
+type Item struct {
+	Depth int // indent level, two source columns per level
+	Num   string
+	Text  string
 }
 
-type mdBlock struct {
-	kind   mdKind
-	level  int      // heading level 1-3
-	text   string   // para/quote/code source (lines joined by \n)
-	lang   string   // fenced code language tag
-	items  []mdItem // list
-	header []string // table header cells
-	rows   [][]string
+// Block is one parsed markdown block.
+type Block struct {
+	Kind   Kind
+	Level  int      // heading level 1-3
+	Text   string   // para/quote/code source (lines joined by \n)
+	Lang   string   // fenced code language tag
+	Items  []Item   // list
+	Header []string // table header cells
+	Rows   [][]string
 }
 
-// parseMarkdown splits src into blocks. Consecutive prose lines (and the
-// blank lines between them) merge into ONE paragraph block, so a drag
-// selection crosses paragraphs instead of stopping at every line.
-func parseMarkdown(src string) []mdBlock {
+// Parse splits src into blocks. Consecutive prose lines (and the blank
+// lines between them) merge into ONE paragraph block, so a drag selection
+// crosses paragraphs instead of stopping at every line.
+func Parse(src string) []Block {
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
-	var blocks []mdBlock
+	var blocks []Block
 	var para []string
 	flushPara := func() {
 		if len(para) > 0 {
-			blocks = append(blocks, mdBlock{kind: mdPara, text: strings.Join(para, "\n")})
+			blocks = append(blocks, Block{Kind: KindPara, Text: strings.Join(para, "\n")})
 			para = nil
 		}
 	}
@@ -74,14 +75,14 @@ func parseMarkdown(src string) []mdBlock {
 				code = append(code, lines[i])
 			}
 			i++ // the closing fence, or the end of the source
-			blocks = append(blocks, mdBlock{kind: mdCode, lang: lang, text: strings.Join(code, "\n")})
+			blocks = append(blocks, Block{Kind: KindCode, Lang: lang, Text: strings.Join(code, "\n")})
 		case strings.HasPrefix(trimmed, "|") && i+1 < len(lines) &&
 			isTableSeparator(strings.TrimSpace(lines[i+1])):
 			flushPara()
 			blocks = append(blocks, parseTable(lines, &i))
 		case trimmed == "---" || trimmed == "***" || trimmed == "___":
 			flushPara()
-			blocks = append(blocks, mdBlock{kind: mdRule})
+			blocks = append(blocks, Block{Kind: KindRule})
 		case strings.HasPrefix(trimmed, "### "), strings.HasPrefix(trimmed, "## "), strings.HasPrefix(trimmed, "# "):
 			flushPara()
 			level, text := 1, strings.TrimPrefix(trimmed, "# ")
@@ -90,7 +91,7 @@ func parseMarkdown(src string) []mdBlock {
 			} else if strings.HasPrefix(trimmed, "## ") {
 				level, text = 2, strings.TrimPrefix(trimmed, "## ")
 			}
-			blocks = append(blocks, mdBlock{kind: mdHeading, level: level, text: text})
+			blocks = append(blocks, Block{Kind: KindHeading, Level: level, Text: text})
 		case strings.HasPrefix(trimmed, "> "):
 			flushPara()
 			var quote []string
@@ -102,11 +103,11 @@ func parseMarkdown(src string) []mdBlock {
 				}
 				quote = append(quote, strings.TrimPrefix(strings.TrimPrefix(t, ">"), " "))
 			}
-			blocks = append(blocks, mdBlock{kind: mdQuote, text: strings.Join(quote, "\n")})
+			blocks = append(blocks, Block{Kind: KindQuote, Text: strings.Join(quote, "\n")})
 		case strings.HasPrefix(trimmed, "- "), strings.HasPrefix(trimmed, "* "),
 			isListItem(trimmed):
 			flushPara()
-			var items []mdItem
+			var items []Item
 			for ; i < len(lines); i++ {
 				t := strings.TrimSpace(lines[i])
 				num, rest := "", t
@@ -121,10 +122,10 @@ func parseMarkdown(src string) []mdBlock {
 					}
 					num, rest = n, r
 				}
-				items = append(items, mdItem{depth: indentOf(lines[i]) / 2, num: num, text: rest})
+				items = append(items, Item{Depth: indentOf(lines[i]) / 2, Num: num, Text: rest})
 			}
 		listDone:
-			blocks = append(blocks, mdBlock{kind: mdList, items: items})
+			blocks = append(blocks, Block{Kind: KindList, Items: items})
 		case trimmed != "" && ind >= 4:
 			// Four columns of indent outside a list item is an indented
 			// code block; collect the whole run so it renders as one card.
@@ -137,7 +138,7 @@ func parseMarkdown(src string) []mdBlock {
 				}
 				code = append(code, strings.TrimSpace(lines[i]))
 			}
-			blocks = append(blocks, mdBlock{kind: mdCode, text: strings.Join(code, "\n")})
+			blocks = append(blocks, Block{Kind: KindCode, Text: strings.Join(code, "\n")})
 		default:
 			para = append(para, trimmed)
 		}
@@ -149,9 +150,9 @@ func parseMarkdown(src string) []mdBlock {
 // parseTable reads the |…| run starting at lines[*i] (its header) into a
 // table block, advancing *i past the last row. The |---| separator line
 // is skipped, not treated as a row or the end of the table.
-func parseTable(lines []string, i *int) mdBlock {
-	var b mdBlock
-	b.kind = mdTable
+func parseTable(lines []string, i *int) Block {
+	var b Block
+	b.Kind = KindTable
 	for ; *i < len(lines); *i++ {
 		t := strings.TrimSpace(lines[*i])
 		if isTableSeparator(t) {
@@ -162,11 +163,11 @@ func parseTable(lines []string, i *int) mdBlock {
 			break
 		}
 		cells := splitTableRow(t)
-		if b.header == nil {
-			b.header = cells
+		if b.Header == nil {
+			b.Header = cells
 			continue
 		}
-		b.rows = append(b.rows, cells)
+		b.Rows = append(b.Rows, cells)
 	}
 	return b
 }

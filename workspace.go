@@ -1,6 +1,6 @@
 package main
 
-// workspace.go is Atlas's workspace: the real directory the session works
+// workspace.go is Crux's workspace: the real directory the session works
 // in, browsed as a lazily-loaded file tree in the right-hand pane the way
 // Codex-style consoles show the working tree. Listings run off the UI
 // thread and land through a.redraw, the same way the model fetch does;
@@ -296,7 +296,7 @@ func formattable(lang string) bool {
 	return lang == "go" || lang == "json"
 }
 
-// formatSource renders a formatted copy of text for the languages Atlas can
+// formatSource renders a formatted copy of text for the languages Crux can
 // format in-process — gofmt for Go, two-space pretty-print for JSON. ok is
 // false for other languages or when the source does not parse (the caller
 // then shows the raw text).

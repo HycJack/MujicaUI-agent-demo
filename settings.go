@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	piai "github.com/HycJack/pi-ai-go"
+	"crux-agent/internal/engine"
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
 	"github.com/ZacharyZhang-NY/MujicaUI/input"
 	"github.com/ZacharyZhang-NY/MujicaUI/overlay"
@@ -27,8 +27,9 @@ import (
 )
 
 // openaiCompat is the synthetic provider id for a custom OpenAI-compatible
-// endpoint (user supplies Base URL + API key + model id).
-const openaiCompat = "openai-compatible"
+// endpoint (user supplies Base URL + API key + model id); the id itself is
+// owned by the engine.
+const openaiCompat = engine.ProviderOpenAICompat
 
 // providerView is the Providers pane's transient UI state.
 type providerView struct {
@@ -46,13 +47,7 @@ func defaultProviderView() providerView { return providerView{} }
 // and deduped so the dropdown reads cleanly.
 func (a *app) knownProviderOptions() []input.SelectOption[string] {
 	out := []input.SelectOption[string]{{Value: openaiCompat, Label: providerLabel(openaiCompat)}}
-	provs := piai.GetProviders()
-	var provs2 []string
-	for _, p := range provs {
-		provs2 = append(provs2, string(p))
-	}
-	slices.Sort(provs2)
-	for _, p := range provs2 {
+	for _, p := range engine.Providers() {
 		out = append(out, input.SelectOption[string]{Value: p, Label: providerLabel(p)})
 	}
 	return out
@@ -60,7 +55,7 @@ func (a *app) knownProviderOptions() []input.SelectOption[string] {
 
 // modelOptions builds the model <select> choices for the selected provider.
 func (a *app) modelOptions() []input.SelectOption[string] {
-	ms := piai.GetModels(piai.KnownProvider(a.llm.Provider))
+	ms := engine.Models(a.llm.Provider)
 	out := make([]input.SelectOption[string], 0, len(ms))
 	for _, m := range ms {
 		out = append(out, input.SelectOption[string]{Value: m.ID, Label: modelLabel(m)})
@@ -106,7 +101,7 @@ func providerLabel(id string) string {
 }
 
 // modelLabel is a friendly name for a model (falls back to its id).
-func modelLabel(m piai.Model) string {
+func modelLabel(m engine.ModelInfo) string {
 	if m.Name != "" {
 		return m.Name
 	}
@@ -114,9 +109,9 @@ func modelLabel(m piai.Model) string {
 }
 
 // backendLabel is the provider·model display for the title bar and composer,
-// resolving the configured backend against the pi-ai registry.
+// resolving the configured backend against the engine's registry.
 func (a *app) backendLabel() string {
-	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
+	m, err := engine.ModelInfoOf(a.llm.Provider, a.llm.Model)
 	name := ""
 	if err == nil {
 		name = modelLabel(m)
@@ -141,7 +136,7 @@ func (a *app) settingsDialogs(c *ui.Context) {
 	wasOpen := a.settingsOpen
 	overlay.Dialog(c, &a.settingsOpen, overlay.DialogOptions{
 		Title:       "Settings",
-		Description: "Configure the LLM backend and how Atlas drives it. Values apply live and persist locally across restarts.",
+		Description: "Configure the LLM backend and how Crux drives it. Values apply live and persist locally across restarts.",
 		Width:       780,
 		Actions: func() {
 			if input.Button(c, "Done", input.ButtonOptions{}).Clicked() {
@@ -456,7 +451,7 @@ func (a *app) rebindModel() {
 // applyModelDefaults resets the reasoning level when the model cannot
 // reason. Sampling is left to the provider defaults.
 func (a *app) applyModelDefaults() {
-	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
+	m, err := engine.ModelInfoOf(a.llm.Provider, a.llm.Model)
 	if err != nil {
 		return
 	}
@@ -473,45 +468,29 @@ func (pv *providerView) testingText() string {
 	return "Test connection"
 }
 
-// testConnection resolves the model and issues a one-message completion to
-// verify the key/base URL work, surfacing the outcome on the Providers pane.
+// testConnection asks the engine to resolve the model and issue a
+// one-message completion, surfacing the outcome on the Providers pane.
 func (a *app) testConnection() {
 	if a.llm.ProviderOK || a.provView.testing {
 		return
 	}
+	cfg := a.engineConfig()
 	if a.redraw == nil {
 		// No window: just check resolution so tests stay fast.
-		_, err := a.resolveModel()
-		a.llm.ProviderOK = err == nil
-		if err != nil {
-			a.llm.ConnectionErr = err.Error()
-		}
+		ok, msg := engine.TestConnection(context.Background(), cfg)
+		a.llm.ProviderOK = ok
+		a.llm.ConnectionErr = msg
 		return
 	}
 	go func() {
 		a.redraw(func() { a.provView.testing = true })
-		ok, msg := a.runConnectionTest()
+		ok, msg := engine.TestConnection(context.Background(), cfg)
 		a.redraw(func() {
 			a.provView.testing = false
 			a.llm.ProviderOK = ok
 			a.llm.ConnectionErr = msg
 		})
 	}()
-}
-
-// runConnectionTest sends a one-message completion against the resolved model.
-func (a *app) runConnectionTest() (bool, string) {
-	m, err := a.resolveModel()
-	if err != nil {
-		return false, err.Error()
-	}
-	_, err = piai.Complete(context.Background(), m, []piai.Message{
-		piai.UserMessage{Content: "Reply with exactly: ok"},
-	}, a.streamOptions())
-	if err != nil {
-		return false, err.Error()
-	}
-	return true, ""
 }
 
 // agentPane is the Agent dialog's content: the system prompt and the

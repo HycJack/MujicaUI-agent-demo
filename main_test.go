@@ -176,12 +176,8 @@ func TestAgentSettings(t *testing.T) {
 	if reasoningTiers[0].Value != "none" || reasoningTiers[3].Value != "high" {
 		t.Fatalf("unexpected tier values: %v", reasoningTiers)
 	}
-	// Sampling is not configurable: the options carry no temperature or
-	// token cap, only the key and the reasoning tier.
-	opts := a.streamOptions()
-	if opts.Temperature != nil || opts.MaxTokens != nil {
-		t.Fatal("stream options should leave sampling to the provider defaults")
-	}
+	// Sampling is not configurable: the engine leaves it to the provider
+	// defaults (asserted in internal/engine's own tests).
 }
 
 // The settings dialogs render as modal overlays with real (non-zero) content

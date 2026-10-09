@@ -1,6 +1,6 @@
 package main
 
-// state.go holds the Atlas app's data: the thread transcript, the repo
+// state.go holds the Crux app's data: the thread transcript, the repo
 // under the cursor, and the sessions list. Everything the UI shows is a
 // function of this state, the way a Command.app holds its session.
 
@@ -8,7 +8,8 @@ import (
 	"context"
 	"time"
 
-	piai "github.com/HycJack/pi-ai-go"
+	"crux-agent/internal/engine"
+	"crux-agent/internal/store"
 	"github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
@@ -63,7 +64,22 @@ type toolRun struct {
 	change   agent.FileChange   // write_file card data
 }
 
-// thread is the working conversation Atlas renders in the center pane.
+// agentStateOf / agentRunOf / agentChangeOf rebuild the UI card state from
+// the store's flattened tool data (the review decision resets on load).
+func agentStateOf(state int) agent.AgentState { return agent.AgentState(state) }
+
+func agentRunOf(t *store.ToolCall) agent.CommandRun {
+	return agent.CommandRun{
+		Command: t.Command, Dir: t.Dir, Output: t.Output,
+		Running: t.Running, ExitCode: t.ExitCode, Duration: t.Dur,
+	}
+}
+
+func agentChangeOf(t *store.ToolCall) agent.FileChange {
+	return agent.FileChange{Path: t.ChangePath, Old: t.ChangeOld, New: t.ChangeNew}
+}
+
+// thread is the working conversation Crux renders in the center pane.
 type thread struct {
 	rows  []row
 	list  chat.MessageListState
@@ -149,16 +165,11 @@ type fileDrawer struct {
 }
 
 // LLMSettings carries the pi-ai-go backend configuration the provider and
-// agent dialogs edit. Values are held in app state, passed to the LLM at
-// call time, and persisted to the user's config directory (config.go);
-// the json tags keep the transient call-state fields out of the file.
+// LLMSettings is what the settings dialogs edit: the persisted fields come
+// from the store's LLMConfig (data layer); the transient call-state fields
+// live only in the UI layer and never reach the file.
 type LLMSettings struct {
-	Provider      string `json:"provider"`
-	Model         string `json:"model"`
-	APIKey        string `json:"apiKey,omitempty"`
-	BaseURL       string `json:"baseUrl,omitempty"`
-	SystemPrompt  string `json:"systemPrompt"`
-	Thinking      string `json:"thinking"`
+	store.LLMConfig
 	Busy          bool   `json:"-"`
 	LastError     string `json:"-"`
 	ProviderOK    bool   `json:"-"`
@@ -168,18 +179,18 @@ type LLMSettings struct {
 // settingsPaneOpen toggles the right-hand config inspector.
 func (a *app) defaultSettings() LLMSettings {
 	s := LLMSettings{
-		Provider:     "openai",
-		Model:        "gpt-4o",
-		SystemPrompt: "You are Atlas, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant.",
-		Thinking:     "none",
+		LLMConfig: store.LLMConfig{
+			Provider:     "openai",
+			Model:        "gpt-4o",
+			SystemPrompt: "You are Crux, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant.",
+			Thinking:     "none",
+		},
 	}
-	if m, err := piai.GetModel(piai.KnownProvider(s.Provider), s.Model); err == nil {
-		s.Thinking = thinkDefault(m)
-	}
+	s.Thinking = engine.ThinkDefault(s.Provider, s.Model)
 	return s
 }
 
-// app is the whole Atlas window state, the state object main.go renders.
+// app is the whole Crux window state, the state object main.go renders.
 type app struct {
 	thread    thread
 	repo      repo
@@ -228,14 +239,14 @@ func newApp() *app {
 		wsCursor:    -1,
 	}
 	a.llm = a.defaultSettings()
-	if p, err := settingsFile(); err == nil {
+	if p, err := store.SettingsPath(); err == nil {
 		a.configPath = p
 	}
 	// The workspace defaults to the user's home directory — never the
 	// directory the binary was launched from. main.go replaces it with the
 	// persisted choice and wires the store paths (tests keep no paths, so
 	// they never touch disk).
-	a.ws = newWorkspace(homeDir())
+	a.ws = newWorkspace(store.HomeDir())
 	a.threads = map[string]thread{}
 	a.threaded = map[string]bool{}
 	a.dirty = map[string]bool{}

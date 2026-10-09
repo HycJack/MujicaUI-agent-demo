@@ -1,6 +1,6 @@
 package main
 
-// repo.go is the Atlas right-hand inspector: the Workspace tab browses the
+// repo.go is the Crux right-hand inspector: the Workspace tab browses the
 // real directory tree, and the Repository tab manages the workspace's real
 // git repository — branch, staged/unstaged changes, commit, history, diff.
 
@@ -124,7 +124,7 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 	if v.err != "" {
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, "⚠ "+v.err).FontSize(12).TextColor(kDanger(c))
-			ui.Text(c, "Atlas manages the git repository at the workspace root.").FontSize(11).TextColor(kTextMuted(c))
+			ui.Text(c, "Crux manages the git repository at the workspace root.").FontSize(11).TextColor(kTextMuted(c))
 		})
 		return
 	}

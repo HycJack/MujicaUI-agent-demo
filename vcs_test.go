@@ -36,8 +36,8 @@ func gitInit(t *testing.T) string {
 	dir := t.TempDir()
 	gitRun(t, dir, "init")
 	gitRun(t, dir, "checkout", "-b", "main") // git <2.28 defaults to master
-	gitRun(t, dir, "config", "user.email", "atlas@example.com")
-	gitRun(t, dir, "config", "user.name", "Atlas")
+	gitRun(t, dir, "config", "user.email", "crux@example.com")
+	gitRun(t, dir, "config", "user.name", "Crux")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ func (a *app) welcome(c *ui.Context, k tokensT) {
 		ui.Scroll(c).Grow(1).MinHeight(0).Padding(28).Children(func() {
 			v := chat.WelcomeScreen(c, chat.WelcomeScreenOptions{
 				Greeting: "Good evening",
-				Subtitle: "Atlas is caught up on the repo. What should it look at next?",
+				Subtitle: "Crux is caught up on the repo. What should it look at next?",
 				Cards: []chat.CapabilityCard{
 					{Title: "Investigate", Description: "Logs, traces and metrics.", Icon: icons.Must("search"),
 						Examples: []string{"Why did checkout latency spike?", "Which job failed last?"}},

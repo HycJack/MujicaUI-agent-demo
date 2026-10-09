@@ -1,6 +1,6 @@
 package main
 
-// drawer.go is Atlas's large right-hand code viewer: an overlay.Drawer that
+// drawer.go is Crux's large right-hand code viewer: an overlay.Drawer that
 // slides over the inspector. The workspace tree opens file contents in it
 // (replacing the old small inline preview box), and the repository pane
 // maximizes its diff or source into it. The drawer's content area is a

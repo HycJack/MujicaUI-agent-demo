@@ -4,12 +4,13 @@ package main
 // prose run, list item, heading, quote and table cell is a selectable
 // element, so drag-select and copy work on reply content (MujicaUI's
 // MarkdownView builds unselectable elements and hides its parser behind
-// an internal package, so Atlas carries this adapted renderer — the
+// an internal package, so Crux carries this adapted renderer — the
 // block dispatch follows the mygo-agent reference renderer).
 
 import (
 	"strings"
 
+	"crux-agent/internal/md"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/theme"
 	"github.com/egoist/mygo/ui"
@@ -19,7 +20,7 @@ import (
 // its blocks. ui.Local keeps it across frames; a changed src re-parses.
 type mdParsed struct {
 	src    string
-	blocks []mdBlock
+	blocks []md.Block
 }
 
 // mdView renders src as selectable markdown. Blocks parse once per
@@ -27,9 +28,9 @@ type mdParsed struct {
 func mdView(c *ui.Context, src string) {
 	k := tokens(c)
 	root := ui.Column(c).Gap(6).MinWidth(0)
-	st := ui.Local(root, "md", func() mdParsed { return mdParsed{src: src, blocks: parseMarkdown(src)} })
+	st := ui.Local(root, "md", func() mdParsed { return mdParsed{src: src, blocks: md.Parse(src)} })
 	if st.src != src {
-		*st = mdParsed{src: src, blocks: parseMarkdown(src)}
+		*st = mdParsed{src: src, blocks: md.Parse(src)}
 	}
 	root.Children(func() {
 		for i := range st.blocks {
@@ -41,50 +42,50 @@ func mdView(c *ui.Context, src string) {
 }
 
 // mdBlockEl renders one block.
-func mdBlockEl(c *ui.Context, b *mdBlock, k tokensT) {
-	switch b.kind {
-	case mdHeading:
-		size := []float32{17, 15.5, 14}[min(b.level, 3)-1]
-		ui.Text(c, b.text).FontSize(size).Bold().Selectable()
-	case mdPara:
-		mdProse(c, strings.Split(b.text, "\n"), k, nil)
-	case mdList:
+func mdBlockEl(c *ui.Context, b *md.Block, k tokensT) {
+	switch b.Kind {
+	case md.KindHeading:
+		size := []float32{17, 15.5, 14}[min(b.Level, 3)-1]
+		ui.Text(c, b.Text).FontSize(size).Bold().Selectable()
+	case md.KindPara:
+		mdProse(c, strings.Split(b.Text, "\n"), k, nil)
+	case md.KindList:
 		ui.Column(c).Gap(4).Children(func() {
-			for _, it := range b.items {
+			for _, it := range b.Items {
 				mark := "•"
-				if it.num != "" {
-					mark = it.num + "."
+				if it.Num != "" {
+					mark = it.Num + "."
 				}
 				ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
 					ui.Text(c, mark).FontSize(14).TextColor(k.TextMuted).MinWidth(14).Shrink(0)
-					mdProse(c, []string{it.text}, k, func(e *ui.Element) { e.Grow(1).MinWidth(0) })
+					mdProse(c, []string{it.Text}, k, func(e *ui.Element) { e.Grow(1).MinWidth(0) })
 				})
 			}
 		})
-	case mdQuote:
+	case md.KindQuote:
 		ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
 			ui.Box(c).Width(2).Background(k.Border)
 			ui.Column(c).Gap(4).Grow(1).MinWidth(0).Children(func() {
-				for _, q := range strings.Split(b.text, "\n") {
+				for _, q := range strings.Split(b.Text, "\n") {
 					mdProse(c, []string{q}, k, func(e *ui.Element) { e.TextColor(k.TextMuted) })
 				}
 			})
 		})
-	case mdTable:
+	case md.KindTable:
 		mdTableEl(c, b, k)
-	case mdCode:
-		opts := chat.CodeBlockOptions{Language: b.lang}
-		chat.CodeBlock(c, strings.TrimRight(b.text, "\n"), opts)
-	case mdRule:
+	case md.KindCode:
+		opts := chat.CodeBlockOptions{Language: b.Lang}
+		chat.CodeBlock(c, strings.TrimRight(b.Text, "\n"), opts)
+	case md.KindRule:
 		ui.Divider(c)
 	}
 }
 
 // mdTableEl renders a table as a grid: a bold header over a rule, body
 // rows with hairline separators, selectable cells.
-func mdTableEl(c *ui.Context, b *mdBlock, k tokensT) {
-	n := len(b.header)
-	for _, r := range b.rows {
+func mdTableEl(c *ui.Context, b *md.Block, k tokensT) {
+	n := len(b.Header)
+	for _, r := range b.Rows {
 		if len(r) > n {
 			n = len(r)
 		}
@@ -94,17 +95,17 @@ func mdTableEl(c *ui.Context, b *mdBlock, k tokensT) {
 	}
 	grid := ui.Grid(c).Columns(n).GapX(14).GapY(0)
 	grid.Children(func() {
-		total := len(b.rows)
+		total := len(b.Rows)
 		for ri := -1; ri < total; ri++ {
 			last := ri == total-1
 			for ci := 0; ci < n; ci++ {
 				text := ""
 				if ri < 0 {
-					if ci < len(b.header) {
-						text = b.header[ci]
+					if ci < len(b.Header) {
+						text = b.Header[ci]
 					}
-				} else if ci < len(b.rows[ri]) {
-					text = b.rows[ri][ci]
+				} else if ci < len(b.Rows[ri]) {
+					text = b.Rows[ri][ci]
 				}
 				cell := ui.Column(c).Padding(5, 2).MinWidth(0)
 				if ri < 0 {

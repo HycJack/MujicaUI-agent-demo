@@ -1,6 +1,6 @@
 {
-  "name": "mujicaui-agent-demo",
-  "identifier": "com.example.mujicauiagentdemo",
+  "name": "crux-agent",
+  "identifier": "com.example.cruxagent",
   "version": "0.1.0",
   "out": "build"
 }

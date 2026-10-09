@@ -1,10 +1,9 @@
 package main
 
-// mdview_test.go covers the selectable markdown renderer: the parser's
-// block shapes (merged prose runs, lists, tables, fences, headings,
-// quotes, rules), the view rendering headless, and the message action
-// row — copy on every message, regenerate on assistant replies, and the
-// message time.
+// mdview_test.go covers the selectable markdown renderer: the view
+// rendering headless, and the message action row — copy on every message,
+// regenerate on assistant replies, and the message time. The parser's
+// block shapes are covered in internal/md.
 
 import (
 	"strings"
@@ -14,63 +13,6 @@ import (
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/egoist/mygo/ui"
 )
-
-func TestMdParseBlocks(t *testing.T) {
-	src := strings.Join([]string{
-		"# Title",
-		"",
-		"First paragraph with **bold** and `code`.",
-		"",
-		"Second paragraph continues here.",
-		"",
-		"- bullet one",
-		"- bullet two",
-		"",
-		"1. ordered",
-		"2. items",
-		"",
-		"> quoted line",
-		"",
-		"| a | b |",
-		"| --- | --- |",
-		"| 1 | 2 |",
-		"",
-		"```go",
-		"fmt.Println(\"hi\")",
-		"```",
-		"",
-		"---",
-	}, "\n")
-	blocks := parseMarkdown(src)
-	kinds := make([]mdKind, len(blocks))
-	for i, b := range blocks {
-		kinds[i] = b.kind
-	}
-	want := []mdKind{mdHeading, mdPara, mdList, mdList, mdQuote, mdTable, mdCode, mdRule}
-	if len(blocks) != len(want) {
-		t.Fatalf("got %d blocks %v, want %d", len(blocks), kinds, len(want))
-	}
-	for i := range want {
-		if kinds[i] != want[i] {
-			t.Fatalf("block %d = %v, want %v (all: %v)", i, kinds[i], want[i], kinds)
-		}
-	}
-	if blocks[1].text != "First paragraph with **bold** and `code`.\n\nSecond paragraph continues here." {
-		t.Fatalf("prose run did not merge across the blank line: %q", blocks[1].text)
-	}
-	if len(blocks[2].items) != 2 || blocks[2].items[0].num != "" {
-		t.Fatalf("bullet list wrong: %+v", blocks[2].items)
-	}
-	if len(blocks[3].items) != 2 || blocks[3].items[1].num != "2" {
-		t.Fatalf("ordered list wrong: %+v", blocks[3].items)
-	}
-	if len(blocks[5].header) != 2 || len(blocks[5].rows) != 1 {
-		t.Fatalf("table wrong: %+v", blocks[5])
-	}
-	if blocks[6].lang != "go" || !strings.Contains(blocks[6].text, "Println") {
-		t.Fatalf("code fence wrong: %+v", blocks[6])
-	}
-}
 
 func TestMdViewRender(t *testing.T) {
 	a := newConversationApp() // a1 carries lists, a table, bold and code spans

@@ -1,17 +1,22 @@
-# MujicaUI Agent Demo（Atlas）
+# Crux Agent（crux-agent）
 
-**MujicaUI Agent Demo** (internally *Atlas*) is a Codex-style coding-agent
-desktop app built on [MyGo](https://github.com/egoist/mygo) — a native,
-GPU-drawn UI toolkit with **no WebView, no HTML, no JavaScript** — and
+**Crux** (module *crux-agent*) is a Codex-style coding-agent desktop app
+built on [MyGo](https://github.com/egoist/mygo) — a native, GPU-drawn UI
+toolkit with **no WebView, no HTML, no JavaScript** — and
 [MujicaUI](https://github.com/ZacharyZhang-NY/MujicaUI), its per-category
 component library. Conversations stream from real LLM backends through
 [pi-ai-go](https://github.com/HycJack/pi-ai-go).
 
-**MujicaUI Agent Demo**（内部名 **Atlas**）是一个 Codex 风格的编码 Agent 桌面应用：
-用 MyGo 原生 GPU 自绘 UI 工具包与 MujicaUI 组件库构建，无 WebView、无 HTML、无
-JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真实 LLM
-流式回复（OpenAI / Anthropic / Google / DeepSeek / GLM / Kimi 等内置 Provider，
+**Crux**（模块名 **crux-agent**，前身 MujicaUI Agent Demo / Atlas）是一个
+Codex 风格的编码 Agent 桌面应用：用 MyGo 原生 GPU 自绘 UI 工具包与 MujicaUI
+组件库构建，无 WebView、无 HTML、无 JavaScript；对话由
+[pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真实 LLM 流式回复
+（OpenAI / Anthropic / Google / DeepSeek / GLM / Kimi 等内置 Provider，
 并支持 OpenAI 兼容端点）。
+
+代码按**三层**组织：`internal/store`（数据层：落盘结构与原子写，不依赖 UI）、
+`internal/engine`（逻辑层：agent 循环与工具集，回调式事件，不依赖 UI）、
+根目录 `package main`（UI 层：状态、渲染与薄适配器）。
 
 ## Screenshots 截图
 
@@ -34,12 +39,13 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 
 - **三栏工作台** —— 会话树（左，⌘B 折叠）、对话线程（中）、检视器（右，⌘J 折叠）；
   全部由 MyGo 弹性布局原语拼装，标题栏与状态栏齐备。
-- **真实 agent 循环（工具执行）** —— pi-ai-go 的 `agent.AgentLoop`：**一次回复一个
-  消息气泡**——等待首 token 时显示打字点；思考与工具调用折叠进可收起的块（`bash`
-  终端卡：命令 / 输出 / 退出码 / 耗时，可点停止；`read_file` 工具调用卡；`write_file`
-  before/after 评审卡），正文流式输出、完成后按 **可选中 Markdown 渲染**（标题 /
-  有序列表 / 表格 / 代码块，全部支持鼠标拖选复制）；每条消息带**复制按钮与时间**，
-  助理回复可**一键重新生成**；无窗口（测试）环境下同步落定占位回复，保持确定性。
+- **真实 agent 循环（工具执行）** —— pi-ai-go 的 `agent.AgentLoop`（经
+  `internal/engine` 回调式封装）：**一次回复一个消息气泡**——等待首 token 时
+  显示打字点；思考与工具调用折叠进可收起的块（`bash` 终端卡：命令 / 输出 /
+  退出码 / 耗时，可点停止；`read_file` 工具调用卡；`write_file` before/after
+  评审卡），正文流式输出、完成后按 **可选中 Markdown 渲染**（标题 / 有序列表 /
+  表格 / 代码块，全部支持鼠标拖选复制）；每条消息带**复制按钮与时间**，助理回复
+  可**一键重新生成**；无窗口（测试）环境下同步落定占位回复，保持确定性。
 - **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录）；标题栏
   `folder` 按钮**直达右侧目录树面板**；Workspace 标签浏览真实目录（懒加载展开、
   目录优先排序、跳过 `.git` / `node_modules` 等噪音）；**点击文件滑出右侧大抽屉**
@@ -50,14 +56,14 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   展开/折叠，点会话打开（属于其它工作区时自动先切换过去）；末行 "Open workspace…"
   手输入口 + `New chat` 按钮。**首跑无任何演示会话**——空树 + 欢迎页，与真实
   agent 控制台一致。
-- **数据持久化** —— 用户**家目录**下 `~/.mujicaui-agent-demo/`（Windows 即
-  `C:\Users\<你>\.mujicaui-agent-demo\`，**不是** `%AppData%`，也不是 exe 所在目录）：
+- **数据持久化** —— 用户**家目录**下 `~/.crux-agent/`（Windows 即
+  `C:\Users\<你>\.crux-agent\`，**不是** `%AppData%`，也不是 exe 所在目录）：
   `settings.json`（LLM 配置，含 API Key）、`workspace.json`（当前工作区 + 最近列表）、
   `sessions.json`（会话**索引**）+ **每个会话一个转录文件** `sessions\<id>.json`
   （打开会话时懒加载，保存只写索引 + 有改动的转录，长对话不再互相拖累）；所有写入走
   **临时文件 + 原子替换**，遇到坏 ACL 的旧文件自动删除重写（修复 "Access is denied"）；
-  旧版存在 `%AppData%\MujicaUI-agent-demo\` 的数据启动时自动迁移（不覆盖新文件，
-  旧目录保留作备份）。重启后原样恢复。
+  旧版存在 `%AppData%\MujicaUI-agent-demo\` 或 `~/.mujicaui-agent-demo/` 的数据启动时
+  自动迁移（不覆盖新文件，旧目录保留作备份）。重启后原样恢复。
 - **文件附加到对话** —— **在目录树的文件上右键 → "Add to conversation"**（菜单里
   还有 "Open in viewer" / "Copy path"），或用代码抽屉 / 变更列表的按钮把文件加入
   输入框上方的上下文 chips；发送时文件内容自动折叠进 LLM 消息（单文件 64 KiB 上限，
@@ -71,8 +77,8 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   兼容端点与在线拉取模型列表；**Reasoning 思考档位 Off / Low / Medium / High**
   跟随后端放在此分区）与 Agent（系统提示 + 固定工具集说明；**不暴露温度 / 限额 /
   流式开关**，采样走 provider 默认）两个分区，值即时生效并**在对话框打开期间实时
-  落盘**（改完直接关窗口/杀进程也不丢；用户配置目录下的 `settings.json`，含 API Key，
-  文件权限 0600），对话框高度固定、切换分区不跳动，正文与分隔线/滚动条留白舒适。
+  落盘**（改完直接关窗口/杀进程也不丢；`settings.json` 含 API Key，文件权限 0600），
+  对话框高度固定、切换分区不跳动，正文与分隔线/滚动条留白舒适。
 - **⌘K 命令面板** —— 新建会话、导出、折叠面板、工作区树、打开工作区、切换
   Diff / 源码等 10 条命令。
 - **消息操作** —— 复制到剪贴板、重新生成、消息反馈。
@@ -88,19 +94,19 @@ go run .
 
 启动后在标题栏点 **Provider settings** 图标（或 ⌘K → `Providers`）填入你的
 API key 即可开始对话；配置在对话框打开期间**实时保存**到用户家目录
-（`~/.mujicaui-agent-demo/`，Windows 即 `C:\Users\<你>\.mujicaui-agent-demo\` 下的
+（`~/.crux-agent/`，Windows 即 `C:\Users\<你>\.crux-agent\` 下的
 `settings.json`、`workspace.json` 与会话存储 `sessions.json` + `sessions\`），
 下次启动自动恢复工作区、会话与全部对话。
 
 ## Build 构建
 
 ```sh
-go build -o atlas.exe .
+go build -o crux.exe .
 ```
 
 ## Tests 测试
 
-渲染与状态逻辑全部可在无窗口环境验证：
+渲染与状态逻辑全部可在无窗口环境验证（UI 层 + 三个内部包各自有测试）：
 
 ```sh
 go test ./...
@@ -114,19 +120,24 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 
 ## Project structure 项目结构
 
-| 文件 | 职责 |
+三层结构：数据（`internal/store`）/ 逻辑（`internal/engine`）/ UI（根目录）。
+
+| 路径 | 职责 |
 | --- | --- |
-| `main.go` | 入口：窗口创建、心跳 goroutine、`App.Run()` |
-| `state.go` | 数据模型（`app` / `thread` / `row` + `toolRun` / `repo` / `session` / `LLMSettings`） |
-| `shell.go` | 外壳布局：标题栏（含目录树直达按钮）、workspace→session 两级会话树、工作区、状态栏、快捷键 |
+| `internal/store/` | **数据层**（无 UI 依赖）：家目录 `~/.crux-agent/` 布局、旧目录迁移链（`%AppData%` → `~/.mujicaui-agent-demo` → `~/.crux-agent`）、settings / workspace / 会话索引 / 每会话转录的落盘结构与原子写 |
+| `internal/engine/` | **逻辑层**（无 UI 依赖）：pi-ai-go agent 循环封装（回调式流事件）、`bash` / `read_file` / `write_file` 工具集、模型解析与 Reasoning 档位、连接测试、provider 注册表门面 |
+| `internal/md/` | 纯 Markdown 解析（块级结构，供 UI 层渲染为可选中元素） |
+| `main.go` | 入口：旧存储迁移、窗口创建、心跳 goroutine、`App.Run()` |
+| `state.go` | UI 状态模型（`app` / `thread` / `row` + `toolRun` / `repo` / `session` / `LLMSettings`） |
+| `shell.go` | 外壳布局：标题栏（含目录树直达按钮）、侧栏 workspace→session 两级会话树、快捷键、状态栏 |
 | `thread.go` | 对话线程：消息列表、**一条回复一个气泡**（思考+工具调用折叠块、Markdown 正文）、输入区 |
-| `llm.go` | pi-ai-go **agent 循环**集成：模型解析、整条回复合并进一行（跨轮工具执行）、中止与错误处理 |
-| `agenttools.go` | agent 工具集：`bash` / `read_file` / `write_file`（以工作区为根真实执行） |
+| `llm.go` | 引擎适配器：线程历史 ↔ engine 消息、回调落回行状态（经 `a.redraw`）、中止与错误处理 |
+| `persist.go` | 持久化胶水：行 ↔ store.Message 转换、会话索引/转录同步（脏标记增量写）、会话与工作区切换逻辑 |
+| `wsdialog.go` | Open-workspace 对话框 |
 | `settings.go` | Settings 模态框：Providers / Agent 两个分区（打开期间实时保存） |
-| `config.go` | 配置持久化：`settings.json` 的加载与保存 |
 | `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 文件附加到对话 |
 | `drawer.go` | 代码抽屉：右侧 720 宽大尺寸查看器（文件内容 / Diff / 源码，Raw/Fmt 格式化） |
-| `wsstore.go` | 工作区存储：默认主目录、目录切换对话框、`workspace.json` + 会话索引/每会话转录文件（原子写、懒加载、旧格式迁移） |
+| `mdview.go` | 可选中 Markdown 渲染（解析在 `internal/md`） |
 | `vcs.go` | 真实 git 后端：status / branch / log 解析、stage / unstage / commit / checkout |
 | `repo.go` | 右栏检视器：Workspace 树（文件右键附加/查看/复制路径）/ Repository（真实分支、变更、提交、Diff / 源码） |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips |

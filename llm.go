@@ -1,15 +1,17 @@
 package main
 
-// llm.go is the pi-ai-go integration surface. It resolves the configured
-// backend into a piai.Model, converts the thread history into pi-ai messages,
-// and streams a real assistant reply into the thread row. The heavy lifting —
-// provider dispatch, SSE streaming, model pricing — lives in pi-ai-go; this
-// file only bridges Atlas's state model to that library.
+// llm.go is the UI layer's adapter to the engine (internal/engine): it
+// converts the thread history into engine messages, runs the loop on a
+// goroutine, and folds the engine's callbacks back into the transcript
+// rows through a.redraw. The heavy lifting — provider dispatch, SSE
+// streaming, tool execution, multi-turn folding — lives in the engine;
+// this file only bridges the app's state model to it.
 //
-// Threading: the UI thread owns the app state. The streaming goroutine never
-// touches the state directly; it buffers deltas locally and hands them to the
-// UI thread through a.redraw(fn) (which wraps mygo's win.Update), exactly the
-// pattern mygo documents for goroutines changing state.
+// Threading: the UI thread owns the app state. The streaming goroutine
+// never touches the state directly; the engine buffers the deltas and the
+// callbacks hand closed-over strings to the UI thread through a.redraw(fn)
+// (which wraps mygo's win.Update), exactly the pattern mygo documents for
+// goroutines changing state.
 
 import (
 	"context"
@@ -19,78 +21,30 @@ import (
 	"strings"
 	"time"
 
-	piai "github.com/HycJack/pi-ai-go"
-	"github.com/HycJack/pi-ai-go/agent"
-	"github.com/HycJack/pi-ai-go/core"
-	_ "github.com/HycJack/pi-ai-go/providers" // registers the built-in providers at init
+	"crux-agent/internal/engine"
 	muiagent "github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 )
 
-// resolveModel maps the app's LLMSettings to a pi-ai Model. A known provider
-// comes from the built-in registry (with a base-URL override when present);
-// the OpenAI-compatible provider is built directly, since its model id and
-// endpoint are user-supplied and not in the registry.
-func (a *app) resolveModel() (piai.Model, error) {
-	if a.llm.Provider == openaiCompat {
-		base := strings.TrimRight(strings.TrimSpace(a.llm.BaseURL), "/")
-		if base == "" {
-			return piai.Model{}, fmt.Errorf("openai-compatible: a Base URL is required")
-		}
-		id := strings.TrimSpace(a.llm.Model)
-		if id == "" {
-			return piai.Model{}, fmt.Errorf("openai-compatible: a model is required")
-		}
-		return piai.Model{
-			ID:            id,
-			Name:          id,
-			Provider:      piai.ProviderOpenAI,
-			API:           piai.APIOpenAICompletions,
-			BaseURL:       base,
-			ContextWindow: 8192,
-		}, nil
+// engineConfig projects the app's LLM settings onto the engine's Config.
+func (a *app) engineConfig() engine.Config {
+	return engine.Config{
+		Provider:     a.llm.Provider,
+		Model:        a.llm.Model,
+		APIKey:       a.llm.APIKey,
+		BaseURL:      a.llm.BaseURL,
+		SystemPrompt: a.llm.SystemPrompt,
+		Thinking:     a.llm.Thinking,
+		Workdir:      a.ws.root,
 	}
-	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
-	if err != nil {
-		return piai.Model{}, err
-	}
-	if u := strings.TrimSpace(a.llm.BaseURL); u != "" {
-		m.BaseURL = u
-	}
-	return m, nil
 }
 
-// thinkingLevel converts the settings string into a pi-ai ThinkingLevel, or
-// disables reasoning when set to "none".
-func (a *app) thinkingLevel() (piai.ThinkingLevel, bool) {
-	switch strings.ToLower(a.llm.Thinking) {
-	case "low":
-		return piai.ThinkingLow, true
-	case "medium", "med":
-		return piai.ThinkingMedium, true
-	case "high":
-		return piai.ThinkingHigh, true
-	case "xhigh":
-		return piai.ThinkingXHigh, true
-	}
-	return "", false
-}
-
-// thinkDefault returns the default thinking level string for a model that
-// supports reasoning, else "none".
-func thinkDefault(m piai.Model) string {
-	if !m.Reasoning {
-		return "none"
-	}
-	return string(piai.ThinkingMedium)
-}
-
-// historyMessages converts the thread's user/assistant text rows into pi-ai
-// messages, skipping tool/demo/decorative rows so the LLM sees clean history.
-// A user row's llmText (draft + attached file contents) wins over its
-// displayed text when set.
-func (a *app) historyMessages() []piai.Message {
-	msgs := make([]piai.Message, 0, len(a.thread.rows))
+// historyMessages converts the thread's user/assistant text rows into
+// engine messages, skipping tool/decorative rows so the LLM sees clean
+// history. A user row's llmText (draft + attached file contents) wins over
+// its displayed text when set.
+func (a *app) historyMessages() []engine.Message {
+	msgs := make([]engine.Message, 0, len(a.thread.rows))
 	for i := range a.thread.rows {
 		r := &a.thread.rows[i]
 		text := r.text
@@ -102,14 +56,11 @@ func (a *app) historyMessages() []piai.Message {
 		}
 		switch r.role {
 		case chat.MessageUser:
-			msgs = append(msgs, piai.UserMessage{Content: text, Timestamp: r.at})
+			msgs = append(msgs, engine.Message{Role: engine.RoleUser, Text: text, At: r.at})
 		case chat.MessageAssistant:
 			switch r.kind {
 			case rowPlain, rowReasoned:
-				msgs = append(msgs, piai.AssistantMessage{
-					Content:   []piai.ContentBlock{piai.TextContent{Type: "text", Text: text}},
-					Timestamp: r.at,
-				})
+				msgs = append(msgs, engine.Message{Role: engine.RoleAssistant, Text: text, At: r.at})
 			}
 		}
 	}
@@ -204,26 +155,23 @@ func (a *app) startStream(userIdx int, rowID string) {
 				a.persistSessions()
 			})
 		}()
-		model, err := a.resolveModel()
-		if err != nil {
-			a.streamError(assistantIdx, err)
-			return
+		cfg := a.engineConfig()
+		s := &agentStream{app: a, curID: curID}
+		cb := engine.Callbacks{
+			OnThinking: func(text string) {
+				a.redraw(func() { s.setRow(func(r *row) { r.thinkText = text }) })
+			},
+			OnText: func(text string) {
+				a.redraw(func() { s.setRow(func(r *row) { r.text = text }) })
+			},
+			OnToolStart: func(callID, name, args string) {
+				a.redraw(func() { a.appendTurnTool(s.curID, callID, name, args) })
+			},
+			OnToolEnd: func(callID, result string, isErr bool, dur time.Duration) {
+				a.redraw(func() { a.finishToolRow(callID, result, isErr, dur) })
+			},
 		}
-		cfg := agent.AgentLoopConfig{
-			Model:               model,
-			SystemPrompt:        a.llm.SystemPrompt,
-			Tools:               a.agentTools(),
-			ToolExecution:       core.ToolExecSequential,
-			ExecEnv:             core.NewDefaultExecutionEnvWithDir(a.ws.root),
-			SimpleStreamOptions: a.streamOptions(),
-		}
-		stream := agent.AgentLoop(ctx, a.historyMessages(), cfg)
-		s := &agentStream{
-			app:       a,
-			curID:     curID,
-			toolStart: map[string]time.Time{},
-		}
-		if _, err := stream.ForEach(ctx, s.onEvent); err != nil && ctx.Err() == nil {
+		if err := engine.Run(ctx, cfg, a.historyMessages(), cb); err != nil && ctx.Err() == nil {
 			a.streamErrorRow(s.curID, err)
 		}
 	}()
@@ -240,59 +188,14 @@ func (a *app) endStreamingRow(id string) {
 	}
 }
 
-// agentStream buffers the agent loop's deltas on the streaming goroutine and
-// lands every state change on the UI thread through a.redraw. The whole
-// reply streams into ONE row tracked by id (never by index): the id is
-// minted on the goroutine and the UI thread only ever sees the captured
-// string, so there is no shared index to race on.
+// agentStream lands the engine's callbacks on the UI thread through
+// a.redraw. The whole reply streams into ONE row tracked by id (never by
+// index): the id is minted before the goroutine starts and the UI thread
+// only ever sees the captured string, so there is no shared index to race
+// on. The engine owns the accumulation; the callbacks carry full text.
 type agentStream struct {
-	app       *app
-	curID     string // the one transcript row the whole reply streams into
-	toolStart map[string]time.Time
-	started   bool // a turn beyond the first is running (text joins with a blank line)
-	think     strings.Builder
-	body      strings.Builder
-}
-
-// onEvent folds one agent event into the transcript.
-func (s *agentStream) onEvent(evt agent.AgentEvent) error {
-	switch e := evt.(type) {
-	case agent.EventMessageStart:
-		// Later turns (after tool results) keep filling the same reply:
-		// their text joins the body after a blank line.
-		s.think.Reset()
-		if s.started && s.body.Len() > 0 {
-			s.body.WriteString("\n\n")
-		}
-		s.started = true
-	case agent.EventMessageUpdate:
-		s.onAssistantEvent(e.AssistantEvent)
-	case agent.EventToolExecStart:
-		s.toolStart[e.ToolCallID] = time.Now()
-		callID, name, args := e.ToolCallID, e.ToolName, string(e.Args)
-		s.app.redraw(func() { s.app.appendTurnTool(s.curID, callID, name, args) })
-	case agent.EventToolExecEnd:
-		dur := time.Since(s.toolStart[e.ToolCallID])
-		result, isErr, callID := string(e.Result), e.IsError, e.ToolCallID
-		s.app.redraw(func() { s.app.finishToolRow(callID, result, isErr, dur) })
-	case agent.EventAgentEnd:
-		// The deferred redraw clears Busy and persists; nothing else to fold.
-	}
-	return nil
-}
-
-// onAssistantEvent folds a raw assistant stream event into the current row.
-func (s *agentStream) onAssistantEvent(evt piai.AssistantMessageEvent) {
-	switch e := evt.(type) {
-	case piai.EventThinkingDelta:
-		s.think.WriteString(e.Delta)
-		th := s.think.String()
-		s.app.redraw(func() { s.setRow(func(r *row) { r.thinkText = th }) })
-	case piai.EventTextDelta:
-		s.body.WriteString(e.Delta)
-		txt := s.body.String()
-		s.app.redraw(func() { s.setRow(func(r *row) { r.text = txt }) })
-	}
+	app   *app
+	curID string // the one transcript row the whole reply streams into
 }
 
 // setRow edits the current assistant row on the UI thread.
@@ -312,7 +215,9 @@ func (s *agentStream) setRow(fn func(*row)) {
 func (a *app) appendTurnTool(rowID, callID, name, args string) {
 	t := &toolRun{callID: callID, name: name, args: args, state: muiagent.AgentRunning}
 	if name == "bash" {
-		var p toolParams
+		var p struct {
+			Command string `json:"command"`
+		}
 		_ = json.Unmarshal([]byte(args), &p)
 		t.run = muiagent.CommandRun{Command: p.Command, Dir: a.ws.root, Running: true}
 	}
@@ -394,21 +299,6 @@ func toolResultText(result string) string {
 		return r.Content[0].Text
 	}
 	return result
-}
-
-// streamOptions builds the streaming options from the app settings.
-// Sampling (temperature / max tokens) is left to the provider's defaults —
-// the Agent pane no longer exposes them.
-func (a *app) streamOptions() piai.SimpleStreamOptions {
-	s := piai.SimpleStreamOptions{
-		StreamOptions: piai.StreamOptions{
-			APIKey: strings.TrimSpace(a.llm.APIKey),
-		},
-	}
-	if tl, ok := a.thinkingLevel(); ok {
-		s.Reasoning = tl
-	}
-	return s
 }
 
 // streamError records a stream failure on the assistant row and in settings.

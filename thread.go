@@ -1,6 +1,6 @@
 package main
 
-// thread.go renders the Atlas conversation: the scrolling transcript in
+// thread.go renders the Crux conversation: the scrolling transcript in
 // the middle, a composer below it, and the agent cards that a Codex-style
 // assistant drops into the flow (thinking, tool calls, file changes,
 // terminal runs and a multi-file diff). This mirrors the dashboard's
@@ -44,10 +44,10 @@ func (a *app) threadView(c *ui.Context) {
 func (a *app) renderRow(c *ui.Context, r *row) {
 	switch r.kind {
 	case rowTyping:
-		chat.TypingIndicator(c, "Atlas")
+		chat.TypingIndicator(c, "Crux")
 	case rowTools:
 		t := r.tool
-		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
+		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Crux"}, func() {
 			agent.ToolCallCard(c, agent.ToolCall{
 				ID: t.callID, Name: t.name, Args: t.args, Result: t.result,
 				Error: t.errMsg, State: t.state, Duration: t.dur,
@@ -55,7 +55,7 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 		})
 	case rowCommand:
 		t := r.tool
-		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
+		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Crux"}, func() {
 			// Changed requests an abort: stop the in-flight agent loop.
 			if agent.CommandExecutionCard(c, t.run, agent.CommandExecutionCardOptions{}).Changed() {
 				a.cancel()
@@ -63,16 +63,16 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 		})
 	case rowDiff:
 		t := r.tool
-		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
+		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Crux"}, func() {
 			// The write already happened; the card is the review record.
 			agent.FileChangeCard(c, &t.decision, t.change, agent.FileChangeCardOptions{Preview: 4})
 		})
 	case rowReasoned:
-		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
+		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Crux"}, func() {
 			// Waiting for the model's first token: show the typing dots so
 			// the reply never sits as an empty bubble.
 			if r.streaming && r.text == "" && r.thinkText == "" && len(r.tools) == 0 {
-				chat.TypingIndicator(c, "Atlas")
+				chat.TypingIndicator(c, "Crux")
 			}
 			if r.thinkText != "" || len(r.tools) > 0 {
 				chat.ThinkingBlock(c, &r.thinkOpen, chat.ThinkingBlockOptions{
@@ -96,7 +96,7 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 			a.actions(c, r)
 		})
 	default:
-		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
+		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Crux"}, func() {
 			if r.text != "" {
 				// User text stays literal: one selectable element, no
 				// markdown interpretation of what the user typed.
@@ -137,7 +137,7 @@ func (a *app) toolCards(c *ui.Context, r *row) {
 // actions is the quiet row under every message: copy for all messages,
 // regenerate for assistant replies, and the message time. The library's
 // MessageActions toolbar also ships like/dislike/speak/share/edit, which
-// Atlas does not use — these two buttons are the whole set.
+// Crux does not use — these two buttons are the whole set.
 func (a *app) actions(c *ui.Context, r *row) {
 	k := tokens(c)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -197,14 +197,14 @@ func (a *app) regenerate(r *row) string {
 
 // composer is the thread's input area: context chips, the prompt editor
 // with a send button, then the model and a context meter. The chat/agent
-// mode picker is gone — Atlas is an agent console, the mode stays Agent.
+// mode picker is gone — Crux is an agent console, the mode stays Agent.
 func (a *app) composer(c *ui.Context) {
 	ui.Column(c).Gap(8).Children(func() {
 		if id, ok := chat.ContextChips(c, a.thread.ctx, chat.ContextChipsOptions{Max: 2}).Removed(); ok {
 			a.thread.ctx = slices.DeleteFunc(a.thread.ctx, func(it chat.ContextItem) bool { return it.ID == id })
 		}
 		p := chat.PromptComposer(c, &a.thread.draft, chat.PromptComposerOptions{
-			Placeholder: "Direct Atlas — it can read files, run commands and edit.",
+			Placeholder: "Direct Crux — it can read files, run commands and edit.",
 			Actions: func() {
 				if chat.SendButton(c, chat.SendButtonOptions{
 					Shortcut: "Enter", Disabled: strings.TrimSpace(a.thread.draft) == "",

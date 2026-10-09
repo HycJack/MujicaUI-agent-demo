@@ -1,6 +1,6 @@
 package main
 
-// tokens.go routes MujicaUI's tokens so every Atlas pane draws through
+// tokens.go routes MujicaUI's tokens so every Crux pane draws through
 // the library's theme rather than a hand-rolled palette.
 
 import (

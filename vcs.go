@@ -1,6 +1,6 @@
 package main
 
-// vcs.go is Atlas's real version-control backend for the workspace: it
+// vcs.go is Crux's real version-control backend for the workspace: it
 // shells out to git in the workspace root and feeds the Repository tab's
 // branch selector, changes list, commit input and diff viewer. Collecting
 // runs off the UI thread and lands through a.redraw, the same way the

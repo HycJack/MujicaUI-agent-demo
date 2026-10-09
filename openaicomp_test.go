@@ -3,48 +3,25 @@ package main
 import (
 	"testing"
 
-	piai "github.com/HycJack/pi-ai-go"
 	"github.com/ZacharyZhang-NY/MujicaUI/input"
 )
 
-// An OpenAI-compatible backend resolves to a directly-built model (not from
-// the registry), carrying the user's base URL and model id, and errors when
-// the required pieces are missing.
-func TestOpenAICompatResolve(t *testing.T) {
+// The app projects its settings onto the engine's Config: provider, model,
+// key, base URL and the workspace root as the tools' workdir. The resolve
+// rules themselves are covered in internal/engine.
+func TestEngineConfigProjection(t *testing.T) {
 	a := newApp()
 	a.llm.Provider = openaiCompat
 	a.llm.BaseURL = "https://example.com/v1/"
 	a.llm.Model = "my-model"
-	m, err := a.resolveModel()
-	if err != nil {
-		t.Fatalf("resolveModel: %v", err)
+	a.llm.APIKey = "sk"
+	cfg := a.engineConfig()
+	if cfg.Provider != openaiCompat || cfg.BaseURL != "https://example.com/v1/" ||
+		cfg.Model != "my-model" || cfg.APIKey != "sk" {
+		t.Fatalf("engine config projection drifted: %+v", cfg)
 	}
-	if m.Provider != piai.ProviderOpenAI {
-		t.Fatalf("provider=%q, want OpenAI", m.Provider)
-	}
-	if m.API != piai.APIOpenAICompletions {
-		t.Fatalf("api=%q, want openai-completions", m.API)
-	}
-	if m.BaseURL != "https://example.com/v1" {
-		t.Fatalf("baseURL=%q, want trailing slash trimmed", m.BaseURL)
-	}
-	if m.ID != "my-model" {
-		t.Fatalf("id=%q, want my-model", m.ID)
-	}
-
-	b := newApp()
-	b.llm.Provider = openaiCompat
-	b.llm.Model = "m"
-	if _, err := b.resolveModel(); err == nil {
-		t.Fatal("expected an error when the Base URL is empty")
-	}
-
-	c := newApp()
-	c.llm.Provider = openaiCompat
-	c.llm.BaseURL = "https://x/v1"
-	c.llm.Model = ""
-	if _, err := c.resolveModel(); err == nil {
-		t.Fatal("expected an error when the model is empty")
+	if cfg.Workdir != a.ws.root {
+		t.Fatal("engine config workdir should follow the workspace root")
 	}
 }
 

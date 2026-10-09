@@ -1,17 +1,15 @@
 package main
 
-// shell.go is the Atlas desk: a title bar on top, a conversation sidebar
+// shell.go is the Crux desk: a title bar on top, a conversation sidebar
 // on the left, the working pane in the middle, a repo inspector that
 // slides in on the right, and a status bar along the bottom. It is built
 // from mygo's flex primitives plus MujicaUI's chrome, the same way the
 // dashboard's shell folds together.
 
 import (
-	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
@@ -20,7 +18,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// view is the whole window. Atlas installs MujicaUI's theme, lays the
+// view is the whole window. Crux installs MujicaUI's theme, lays the
 // desk out, then binds the console shortcuts and the command palette.
 func (a *app) view(c *ui.Context) {
 	useTheme(c)
@@ -65,11 +63,11 @@ func (a *app) shortcuts(c *ui.Context) {
 // titlebar is the window's top row: the mark and name, a sidebar toggle,
 // then the model and the inspector toggle.
 func (a *app) titlebar(c *ui.Context, k tokensT) {
-	layout.TitleBar(c, "Atlas", layout.TitleBarOptions{
+	layout.TitleBar(c, "Crux", layout.TitleBarOptions{
 		Leading: func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.Must("bot")).FontSize(16).TextColor(k.Accent)
-				ui.Text(c, "Atlas").FontSize(14).Bold()
+				ui.Text(c, "Crux").FontSize(14).Bold()
 				a.iconToggle(c, k, "menu", "Toggle sessions", func() { a.navOpen = !a.navOpen })
 			})
 		},
@@ -260,55 +258,6 @@ func (a *app) iconToggle(c *ui.Context, k tokensT, icon, label string, fn func()
 	b.Children(func() {
 		ui.Icon(c, icons.Must(icon)).FontSize(15).TextColor(k.TextMuted)
 	})
-}
-
-// newThread starts a fresh, empty chat under a new session id and selects
-// it in the index; the current workspace's tree node stays open so the new
-// session shows up under it.
-func (a *app) newThread() {
-	a.saveSession()
-	a.nextID++
-	a.sessionID = fmt.Sprintf("new-%d", a.nextID)
-	a.thread = thread{mode: chat.ModeAgent, model: a.thread.model}
-	a.sessions = append([]session{{id: a.sessionID, title: "New chat " + strconv.Itoa(a.nextID), updated: time.Now(), ws: a.ws.root}}, a.sessions...)
-	if a.ws.root != "" {
-		a.sessTree.Open.Add("ws:" + a.ws.root)
-	}
-	a.closeModals()
-	a.persistSessions()
-}
-
-// openSession saves the working transcript and loads the chosen one.
-// Selecting a session always brings the user back to the conversation,
-// closing any settings dialog.
-func (a *app) openSession(id string) {
-	if id == "" || id == a.sessionID {
-		return
-	}
-	a.closeModals()
-	a.saveSession()
-	a.sessionID = id
-	if t, ok := a.threads[id]; ok {
-		a.thread = t
-		return
-	}
-	a.loadTranscript(id) // transcripts load lazily from their own file
-	if t, ok := a.threads[id]; ok {
-		a.thread = t
-		return
-	}
-	a.thread = thread{mode: chat.ModeAgent} // never opened: start empty
-	a.persistSessions()
-}
-
-// saveSession stashes the working transcript under its session id so
-// switching away and back keeps what the user typed, and flags the
-// transcript file for the next persist.
-func (a *app) saveSession() {
-	if a.sessionID != "" {
-		a.threads[a.sessionID] = a.thread
-		a.markDirty(a.sessionID)
-	}
 }
 
 // modelName returns the active model's display name.

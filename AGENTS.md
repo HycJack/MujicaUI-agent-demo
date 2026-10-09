@@ -1,6 +1,7 @@
 # AGENTS.md — 用 MyGo + MujicaUI 编码的注意事项
 
-本仓库（`MujicaUI-agent-demo`，即 **Atlas**，一个 Codex 风格编码 Agent）
+本仓库（`crux-agent`，即 **Crux**，一个 Codex 风格编码 Agent；前身
+MujicaUI-agent-demo / Atlas）
 建立在两个库之上：
 
 - **MyGo** `github.com/egoist/mygo` —— 原生 GPU 自绘 UI 与窗口运行时（无 WebView / HTML / JS）。
@@ -61,7 +62,7 @@ go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 
    - **`ui.Row` 的默认交叉轴对齐是 `Center`，不是 `Stretch`**（`ui.Column` 才是
      auto→Stretch）。Row 里要撑满高度的子元素（如 `Grow(1)` 的对话/列表容器），
      必须显式 `.AlignItems(ui.Stretch)`，否则子元素只按内容高度居中，里面的
-     `Grow(1)` 塌成 0 → 整个区域不可见（Atlas 的 chat 区就栽在这，见
+     `Grow(1)` 塌成 0 → 整个区域不可见（Crux 的 chat 区就栽在这，见
      `shell.go` 的 `content()` 与 `TestChatPaneLayout`）。
    - `ui.List` 虚拟列表只构建视口内的行；`FollowEnd` 时首帧看到的是**末尾**行，
      顶部行滚上来才构建（`Find` 到 0 尺寸 / 找不到 ≠ 渲染 bug，先确认视口）。
@@ -153,14 +154,14 @@ go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 
 | 路径 | 内容 |
 | --- | --- |
 | `README.md` | 项目说明与截图；`MYGO_UI_SHOTS` 截图用法 |
-| `SPEC.md` | Atlas 的完整规格文档 |
+| `SPEC.md` | Crux 的完整规格文档 |
 | `*.go` | 各文件职责见 SPEC §4；`tokens.go` 演示如何只做主题转发 |
 | `screenshots/` | 渲染测试产出的界面截图 |
 
 组件级的参考实现（agent / chat / code / git 各组件的直接用法）见
 [mygo-dashboard](https://github.com/HycJack/mygo-dashboard) 仓库的 `pages_mujica_*.go`。
 
-**改 Atlas（本仓库）**：先读 `SPEC.md`，再动手。
+**改 Crux（本仓库）**：先读 `SPEC.md`，再动手。
 
 ---
 

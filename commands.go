@@ -1,6 +1,6 @@
 package main
 
-// commands.go is Atlas's command palette (⌘K): the actions a coding
+// commands.go is Crux's command palette (⌘K): the actions a coding
 // console exposes — new chat, fold the panels, jump between the diff and
 // the file source, export the thread — reachable without the mouse.
 

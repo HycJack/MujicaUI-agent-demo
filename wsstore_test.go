@@ -1,9 +1,10 @@
 package main
 
-// wsstore_test.go covers the workspace store: the persisted current
-// workspace and recents, the per-workspace session transcripts, the
-// workspace switch, the sidebar's per-workspace filtering, and the
-// Open-workspace dialog.
+// wsstore_test.go covers the UI layer's persistence glue: the persisted
+// current workspace and recents, the per-workspace session transcripts
+// (index + one file per session), the workspace switch, the sidebar's
+// per-workspace filtering, and the Open-workspace dialog. The store
+// package's own schemas are covered in internal/store.
 
 import (
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"crux-agent/internal/store"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -46,21 +48,14 @@ func TestSessionsRoundtrip(t *testing.T) {
 	a.send() // persists the transcript rows (headless placeholder reply)
 
 	// The index holds metadata only; the transcript lives in its own file.
-	idx, err := os.ReadFile(a.sessionsPath)
+	idx, err := store.LoadIndex(a.sessionsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(idx), `"rows"`) {
-		t.Fatal("the session index should not embed transcripts")
+	if len(idx.Sessions) != 1 || !idx.Sessions[0].Threaded {
+		t.Fatalf("index wrong: %+v", idx.Sessions)
 	}
-	var st sessionStore
-	if err := json.Unmarshal(idx, &st); err != nil {
-		t.Fatal(err)
-	}
-	if len(st.Sessions) != 1 || !st.Sessions[0].Threaded {
-		t.Fatalf("index wrong: %+v", st.Sessions)
-	}
-	trPath := filepath.Join(dir, "sessions", st.Sessions[0].ID+".json")
+	trPath := filepath.Join(dir, "sessions", idx.Sessions[0].ID+".json")
 	tr, err := os.ReadFile(trPath)
 	if err != nil {
 		t.Fatalf("transcript file missing: %v", err)
@@ -103,27 +98,22 @@ func TestSessionsLegacyMigration(t *testing.T) {
 	a.send()
 
 	// Fold the per-session layout back into the legacy shape on disk.
-	st := sessionStore{}
-	idx, _ := os.ReadFile(a.sessionsPath)
-	json.Unmarshal(idx, &st)
-	type legacySession struct {
-		storedSession
-		Rows []storedRow `json:"rows"`
+	idx, err := store.LoadIndex(a.sessionsPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var legacy struct {
-		Sessions []legacySession `json:"sessions"`
+	tr0, err := store.LoadTranscript(dir, idx.Sessions[0].ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	trRaw, _ := os.ReadFile(filepath.Join(dir, "sessions", st.Sessions[0].ID+".json"))
-	var ts transcriptStore
-	json.Unmarshal(trRaw, &ts)
-	for _, ss := range st.Sessions {
-		legacy.Sessions = append(legacy.Sessions, legacySession{
-			storedSession: ss,
-			Rows:          ts.Rows,
-		})
+	for i := range idx.Sessions {
+		idx.Sessions[i].LegacyRows = tr0.Rows
 	}
-	lbuf, _ := json.Marshal(legacy)
-	if err := os.WriteFile(a.sessionsPath, lbuf, 0o600); err != nil {
+	buf, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.sessionsPath, buf, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	os.RemoveAll(filepath.Join(dir, "sessions"))
@@ -232,12 +222,12 @@ func TestWorkspaceDialog(t *testing.T) {
 }
 
 func TestHomeDirDefault(t *testing.T) {
-	if homeDir() == "" {
-		t.Fatal("homeDir resolved to an empty path")
+	if store.HomeDir() == "" {
+		t.Fatal("HomeDir resolved to an empty path")
 	}
 	a := newApp()
-	if a.ws.root != homeDir() {
-		t.Fatalf("default workspace %q, want the home directory %q", a.ws.root, homeDir())
+	if a.ws.root != store.HomeDir() {
+		t.Fatalf("default workspace %q, want the home directory %q", a.ws.root, store.HomeDir())
 	}
 	if _, err := os.Stat(a.ws.root); err != nil {
 		t.Fatalf("default workspace does not exist: %v", err)

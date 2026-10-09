@@ -1,16 +1,16 @@
-# MujicaUI-agent-demo（Atlas）— 规格文档（Spec）
+# crux-agent（Crux）— 规格文档（Spec）
 
 > 一个用 MyGo 原生 UI 工具包 + MujicaUI 组件库实现的 **Codex 风格编码 Agent 桌面应用**。
 > 全窗口 GPU 自绘：无 WebView、无 HTML、无 JavaScript。
 
-本文档描述 `MujicaUI-agent-demo` 模块的完整规格：目标、架构、状态模型、界面、交互、主题、
+本文档描述 `crux-agent` 模块的完整规格：目标、架构、状态模型、界面、交互、主题、
 构建与测试。它既是实现说明，也是后续迭代的契约。
 
 ---
 
 ## 1. 概述
 
-Atlas 把一次编码会话摊开成三块：
+Crux 把一次编码会话摊开成三块：
 
 - **会话栏（左）** —— 历史会话索引，可折叠。
 - **工作区（中）** —— 与 Agent 的对话线程：用户输入、Agent 的思考 / 正文 / 工具调用 / 终端运行，
@@ -34,14 +34,14 @@ Atlas 把一次编码会话摊开成三块：
 - 提供 **Settings 模态框**（`overlay.Dialog`）：左侧源列表切换 Providers（后端/模型/Key/URL/
   推理分档，支持 OpenAI 兼容端点与拉取模型列表）与 Agent（系统提示 + 固定工具集说明）
   两个分区。配置保存在 app 状态、每次调用时传入，并**在对话框打开期间实时持久化**
-  （值一变即写盘，杀进程也不丢；见 `config.go` / `settingsDialogs`）。
+  （值一变即写盘，杀进程也不丢；见 `persist.go` / `settingsDialogs`）。
 - 首跑无任何种子会话：会话列表为空、显示欢迎页，与真实 agent 控制台一致。
 
 ### 1.2 非目标
 
 - git 走**真实命令**（status / diff / log / stage / unstage / commit / checkout），
   但不做 push / pull / fetch 等远端操作，也不处理合并冲突。
-- LLM 配置持久化到用户家目录 `~/.mujicaui-agent-demo/`（`settings.json`）；工作区选择与全部会话/对话记录
+- LLM 配置持久化到用户家目录 `~/.crux-agent/`（`settings.json`）；工作区选择与全部会话/对话记录
   持久化到同目录（`workspace.json` / `sessions.json`）；"Export / Import" 等仍为
   演示性提示。
 - 工作区树对真实文件系统**只读**（列目录 + 抽屉查看 + 附加到对话）；agent 的
@@ -52,11 +52,12 @@ Atlas 把一次编码会话摊开成三块：
 
 ## 2. 运行与构建
 
-模块路径：仓库根目录（`MujicaUI-agent-demo/`），包名 `main`。
+模块路径：仓库根目录，包名 `main`（UI 层）；数据层 `internal/store`、逻辑层
+`internal/engine`、Markdown 解析 `internal/md`。
 
 ```sh
 go run .            # 运行（打开窗口）
-go build -o atlas.exe .   # 构建可执行文件
+go build -o crux.exe .   # 构建可执行文件
 go test ./...       # 渲染 + 状态逻辑测试
 go vet ./...        # 静态检查
 gofmt -l .          # 期望无输出
@@ -72,10 +73,10 @@ go run github.com/egoist/mygo/cmd/mygo build
 
 | 项 | 值 |
 | --- | --- |
-| 标题 | `Atlas — coding agent` |
+| 标题 | `Crux — coding agent` |
 | 初始尺寸 | 1280 × 820 |
 | 最小尺寸 | 1024 × 640 |
-| `StateKey` | `atlas-app`（记忆窗口位置/状态） |
+| `StateKey` | `crux-app`（记忆窗口位置/状态） |
 | 内容 | `ui.View(a.view)` |
 
 启动时另起一个 goroutine，每秒调用 `win.Update(func(){})`，让状态栏的 “live” 指示与
@@ -85,8 +86,8 @@ go run github.com/egoist/mygo/cmd/mygo build
 
 ```json
 {
-  "name": "mujicaui-agent-demo",
-  "identifier": "com.example.mujicauiagentdemo",
+  "name": "crux-agent",
+  "identifier": "com.example.cruxagent",
   "version": "0.1.0",
   "out": "build"
 }
@@ -99,7 +100,7 @@ go run github.com/egoist/mygo/cmd/mygo build
 `go.mod`：
 
 ```
-module mujicaui-agent-demo
+module crux-agent
 
 go 1.27.1
 
@@ -128,30 +129,54 @@ require (
 
 ## 4. 模块结构
 
+代码按**三层**组织——数据处理（`internal/store`）、逻辑处理（`internal/engine`）、
+UI（根目录 `package main`）；数据层与逻辑层**不 import 任何 UI 包**，UI 层通过
+显式转换与回调桥接它们。
+
+### 4.1 数据层 `internal/store`（无 UI 依赖）
+
 | 文件 | 职责 |
 | --- | --- |
-| `main.go` | 入口：`newApp()`、`loadSettings()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
-| `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText` 与 `tool *toolRun`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
-| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树、工作区、状态栏；快捷键；会话切换。 |
-| `thread.go` | 对话线程：`threadView`、`renderRow`（一条回复一个气泡：等待提示 + 思考/工具折叠块 + 可选中正文）、`actions`（复制/重新生成/时间）、`composer`。 |
-| `mdparse.go` | Markdown 块级解析：标题/散文段（跨段合并）/列表/引用/表格/代码围栏/分隔线 → `[]mdBlock`。 |
-| `mdview.go` | 可选中 Markdown 渲染：块缓存（`ui.Local`）+ 每帧重建，全元素 `.Selectable()`，行内 Span/链接双形式，代码块用 `chat.CodeBlock`。 |
-| `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（整条回复进一行：思考/文本增量刷新当前行，工具调用 `appendTurnTool` 进该行的卡片块，跨轮正文空行衔接）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
-| `agenttools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以工作区为根，`write_file` 自动建父目录。 |
-| `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
-| `config.go` | **配置持久化**：家目录 `~/.mujicaui-agent-demo/`、`settingsFile`/`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查）、`migrateConfigDir`（旧 `%AppData%` 存储一次性迁入家目录，不覆盖新文件）。 |
+| `store.go` | 家目录布局 `~/.crux-agent/`（`Dir`/`SettingsPath`/`WorkspacePrefsPath`/`SessionsPath`/`TranscriptPath`（id 消毒防目录逃逸））、`WriteFileAtomic`（临时文件 + rename，坏 ACL 目标自愈）、`Migrate` 旧目录迁移链（`%AppData%\MujicaUI-agent-demo` → `~/.mujicaui-agent-demo` → `~/.crux-agent`，copyIfMissing 不覆盖新文件，旧目录保留）。 |
+| `settings.go` | `LLMConfig`（**仅持久化字段**：provider/model/apiKey/baseUrl/systemPrompt/thinking）、`LoadSettings`/`SaveSettings`。 |
+| `workspace.go` | `WsPrefs{current, recents}` 与其读写。 |
+| `sessions.go` | 转录 schema：`Message`/`ToolCall`（role/kind/mode 持久化为字符串，工具卡数据拍平）、`SessionMeta`/`SessionIndex`（仅元数据）、`Transcript`、`LoadIndex`/`SaveIndex`/`LoadTranscript`/`SaveTranscript`、`MigrateLegacyIndex`（旧单文件格式一次性拆分，原文件留 `.bak`）。 |
+
+### 4.2 逻辑层 `internal/engine`（无 UI 依赖）
+
+| 文件 | 职责 |
+| --- | --- |
+| `loop.go` | **agent 循环封装**：`Config`（provider/model/key/baseURL/systemPrompt/thinking/workdir）、`Run(ctx, cfg, history, callbacks)`——解析模型、组装 `agent.AgentLoopConfig`、消费事件流并折叠为**回调**（`OnThinking`/`OnText` 传**累计全文**，跨轮正文空行衔接；`OnToolStart`/`OnToolEnd` 带耗时）、`ResolveModel`（OpenAI 兼容端点直接构建 + 注册表查询 + BaseURL 覆盖）、`ThinkDefault`。 |
+| `tools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以 workdir 为根，`write_file` 自动建父目录。 |
+| `registry.go` | provider 注册表门面：`Providers`/`Models`/`ModelInfoOf`（UI 只见 `ModelInfo`）、`TestConnection`（单轮连通性检查）。 |
+
+### 4.3 Markdown 解析 `internal/md`（纯数据处理）
+
+| 文件 | 职责 |
+| --- | --- |
+| `md.go` | 块级解析 `Parse(src) []Block`：标题/散文段（跨段合并）/列表/引用/表格/代码围栏/分隔线。 |
+
+### 4.4 UI 层（根目录 `package main`）
+
+| 文件 | 职责 |
+| --- | --- |
+| `main.go` | 入口：`store.Migrate()`、`newApp()`、`loadSettings()`、store 路径接线、窗口创建、`a.redraw = win.Update`、心跳 goroutine、`App.Run()`。 |
+| `state.go` | UI 状态模型：`app` / `thread` / `row`（含 `tools []*toolRun` 合并卡块）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`（内嵌 `store.LLMConfig` + 瞬态字段）；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
+| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树（`sidebar`）、工作区、状态栏；快捷键。 |
+| `thread.go` | 对话线程：`threadView`、`renderRow`（一条回复一个气泡：等待提示 + 思考/工具折叠块 + 可选中正文）、`actions`（复制/重新生成/时间）、`composer`、`regenerate`。 |
+| `llm.go` | **引擎适配器**：`engineConfig()`（设置 → engine.Config 投影）、`historyMessages()`（行 → engine.Message）、`send`（附件折叠）、`startStream`（goroutine 跑 `engine.Run`，回调经 `a.redraw` 落回行状态：思考/文本增量刷新当前行，`appendTurnTool` 进该行的卡片块）、`finishToolRow`/`streamError`/中止处理。 |
+| `persist.go` | **持久化胶水**：行 ↔ `store.Message` 转换（`storeMsg`/`loadMsg`，role/kind/mode 映射）、`persistSessions`（索引 + 脏标记转录增量写）、`loadSessions`/`loadTranscript`（懒加载）、`saveWsPrefs`/`loadWsPrefs`、`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查）、`newThread`/`openSession`/`saveSession`/`openWorkspace`/`restoreSession`。 |
+| `wsdialog.go` | Open-workspace 对话框（目录输入 + recents）。 |
+| `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection 经 `engine.TestConnection`）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
+| `mdview.go` | 可选中 Markdown 渲染：块缓存（`ui.Local`）+ 每帧重建，全元素 `.Selectable()`，行内 Span/链接双形式，代码块用 `chat.CodeBlock`（解析在 `internal/md`）。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`wsEnsureLoaded`（Outline 行内触发）、`readCapped` 文件预览（256 KiB 上限）、`attachFile` 附加到对话、`reloadWorkspace`。 |
-| `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、会话索引 `sessions.json`（仅元数据）+ **每会话一个转录文件** `sessions/<id>.json`（懒加载、脏标记增量写）、`writeFileAtomic`（临时文件 + rename，坏 ACL 目标自愈）、旧单文件格式一次性迁移、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
 | `drawer.go` | **代码抽屉**：右侧 `overlay.Drawer`（宽 720）大尺寸查看器——树点击打开文件内容（Raw/Fmt + 附加），仓库面板 `maximize` 把 Diff/源码放大进来；内容高度按窗高推导（抽屉内容区是 Scroll，grow 会塌）。 |
 | `vcs.go` | **真实 git 后端**：`runGit`（15s 超时）、`parseStatus`/`parseBranches`/`parseLog`（porcelain 解析）、`collectVCS` 快照、`fileVersions`（HEAD / index / worktree 三方取版本，二进制探测）、`vcsAction`（stage/unstage）、`commitStaged`（含 amend）、`checkoutBranch`/`createBranch`、`loadSelectedDiff`。 |
 | `repo.go` | 右栏检视器：Workspace 标签（`ui.Outline` 目录树：自定义行 + 右键菜单附加/查看/复制路径）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
 | `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`、`tokensT` 别名。 |
 | `commands.go` | ⌘K 命令面板与 `runCommand`（含 providers / agent / workspace / reload-workspace 命令）。 |
-| `main_test.go` | 测试：各视图渲染、发送、会话切换、命令面板、Provider 重绑、Agent 配置、Settings 模态框渲染。 |
-| `workspace_test.go` | 测试：目录列举排序/忽略、懒加载与失败态、预览读取/截断/错误、树渲染与点击联动、workspace 命令。 |
-| `settings_nav_test.go` | 测试：Settings 左侧源列表切换分区（Providers→Agent）。 |
-| `openaicomp_test.go` | 测试：OpenAI 兼容端点 `resolveModel`、模型树节点、headless 拉取。 |
+| `*_test.go` | UI 层测试（见 §14）；`internal/store`、`internal/engine`、`internal/md` 各有自己的包内测试。 |
 | `mygo.json` | 打包元数据。 |
 | `resources/icon.png` | 应用图标。 |
 
@@ -176,7 +201,7 @@ type app struct {
     sessions  []session                // 会话索引（跨工作区全量，树上按工作区分组）
     threads   map[string]thread        // 按会话缓存的工作线程（切走再切回保留草稿）
 
-    // workspace store（wsstore.go）
+    // workspace store（persist.go）
     recents      []string // 最近打开的工作区，最新在前（上限 6）
     wsDialogOpen bool     // Open-workspace 对话框
     wsPathField  string   // 对话框里的目录输入框
@@ -194,7 +219,7 @@ type app struct {
 接线，因此测试里的 `newApp()` 从不碰盘。
 
 `newApp()` 构造初始状态：**无种子会话**（`sessionID=""`、`sessions=nil`、空线程），
-`navOpen=true`，`repo.branch="main"`；工作区默认 `homeDir()`（用户主目录，**不是**
+`navOpen=true`，`repo.branch="main"`；工作区默认 `store.HomeDir()`（用户主目录，**不是**
 可执行文件所在目录）。`main.go` 随后 `loadWsPrefs()` → `loadSessions()` →
 `restoreSession()`；没有持久化会话时界面停在欢迎页，点 "New chat" 才创建会话。
 
@@ -327,8 +352,8 @@ Column (Fill, Background)
 
 ### 6.1 标题栏 `titlebar`
 
-- `layout.TitleBar(c, "Atlas", {Leading, Trailing})`。
-- Leading：`bot` 图标 + "Atlas" 字标 + 会话栏折叠按钮（`menu`）。
+- `layout.TitleBar(c, "Crux", {Leading, Trailing})`。
+- Leading：`bot` 图标 + "Crux" 字标 + 会话栏折叠按钮（`menu`）。
 - Trailing：当前模型名 + Provider/Agent 设置 + **`folder` 按钮（直达右侧目录树面板：
   `showRepo=true, paneTab=0`）** + `git-pull-request` 检视器开关 + 头像。
 
@@ -372,37 +397,40 @@ Column (Fill, Background)
 
 ---
 
-## 7. 对话线程（`thread.go` + `llm.go` + `agenttools.go`）
+## 7. 对话线程（`thread.go` + `llm.go` + `internal/engine`）
 
 ### 7.1 `send()` → agent 循环
 
-`send()` 现由 `llm.go` 提供，走 pi-ai-go 的 **agent 循环**（多轮 + 工具执行）：
+`send()` 现由 `llm.go` 提供，走 `internal/engine` 封装的 pi-ai-go **agent 循环**
+（多轮 + 工具执行）：
 
 1. 取 `strings.TrimSpace(draft)`，空或 `a.llm.Busy` 则返回。
 2. 附件折叠进 `llmText`（见 §10）后追加用户行。
 3. 追加一条**空的 `rowReasoned` 助理行（`streaming=true`）**——整条回复（所有轮次的
    思考、工具调用、正文）都进这一行，`list.ScrollToEnd()`，`persistSessions()`。
-4. `startStream(userIdx)`：置 `a.llm.Busy=true`，建 `context.WithCancel` 存到
+4. `startStream(userIdx, rowID)`：置 `a.llm.Busy=true`，建 `context.WithCancel` 存到
    `a.cancelFn`，起一个 goroutine：
-   - `resolveModel()` 解析模型；组装 `agent.AgentLoopConfig{Model, SystemPrompt,
-     Tools: a.agentTools(), ToolExecution: ToolExecSequential,
-     ExecEnv: core.NewDefaultExecutionEnvWithDir(a.ws.root), SimpleStreamOptions}`。
-   - `agent.AgentLoop(ctx, historyMessages(), cfg)` 启动循环，`stream.ForEach` 消费
-     `AgentEvent`（由 `agentStream` 承接，行 id 只在 goroutine 侧铸造，UI 线程只见
-     捕获的字符串，无共享索引竞争）：
-     - `EventMessageStart`：**不建新行**——后续轮次（工具结果之后）继续填同一条
-       回复；正文跨轮以空行衔接，思考跨轮累加。
-     - `EventMessageUpdate` 内的 `EventThinkingDelta` / `EventTextDelta`：增量刷新
-       当前行（`a.redraw` 按值传字符串）。
-     - `EventToolExecStart{ToolCallID, ToolName, Args}`：`appendTurnTool` 把工具
-       追加进**当前回复行的 `tools` 卡片块**（bash 预填 `CommandRun`），状态 Running。
-     - `EventToolExecEnd{Result, IsError}`：按 callID 在各行 `tools`（含旧版单工具
-       字段）里找到卡片，落定结果/错误/耗时；bash 填 `CommandRun`（输出 + 退出码），
-       write_file 从 Details 解析 old/new 填 `FileChange`。
-     - `EventAgentEnd`：循环收尾。
+   - `a.engineConfig()` 把设置投影成 `engine.Config`（含 `Workdir: a.ws.root`），
+     `a.historyMessages()` 把行转成 `engine.Message` 历史。
+   - `engine.Run(ctx, cfg, history, callbacks)` 在引擎内解析模型、组装
+     `AgentLoopConfig{Model, SystemPrompt, Tools: engine.Tools(workdir),
+     ToolExecution: ToolExecSequential, ExecEnv: NewDefaultExecutionEnvWithDir(workdir),
+     SimpleStreamOptions}` 并消费事件流，折叠为回调（行 id 只在 goroutine 侧铸造，
+     UI 线程只见捕获的字符串，无共享索引竞争）：
+     - `OnThinking(text)`：**累计全文**（引擎内跨轮累加）→ `a.redraw` 刷新当前行
+       `thinkText`。
+     - `OnText(text)`：**累计全文**（后续轮次——工具结果之后——的正文以空行衔接，
+       衔接逻辑在引擎内）→ 刷新当前行 `text`。
+     - `OnToolStart(callID, name, args)`：`appendTurnTool` 把工具追加进**当前回复行
+       的 `tools` 卡片块**（bash 预填 `CommandRun`），状态 Running。
+     - `OnToolEnd(callID, result, isErr, dur)`：`finishToolRow` 按 callID 在各行
+       `tools`（含旧版单工具字段）里找到卡片，落定结果/错误/耗时；bash 填
+       `CommandRun`（输出 + 退出码），write_file 从 Details 解析 old/new 填
+       `FileChange`。
    - 完成后（defer）`a.llm.Busy=false`、清 `cancelFn`、`endStreamingRow`（清
      `streaming`，正文从流式纯文本切换为 Markdown 渲染）、`ScrollToEnd`、
-     `persistSessions()`。
+     `persistSessions()`；`engine.Run` 返回错误且非 ctx 取消时 `streamErrorRow`
+     落错误文案。
 
 > **一条回复一个气泡**：思考 + 工具调用折叠进该行的 `ThinkingBlock`（每行独立的
 > `thinkOpen` 开合状态），正文在块下方；流式期间正文走 `StreamingText`（纯文本 +
@@ -413,7 +441,7 @@ Column (Fill, Background)
 > `strings.Builder`（`win.Update` 不等待 `fn`，闭包可能在 goroutine 退出后执行）。
 > `a.redraw==nil`（无窗口 / 测试）时 `send()` 同步落定占位文本，测试保持确定性。
 
-### 7.2 工具集（`agenttools.go`）
+### 7.2 工具集（`internal/engine/tools.go`）
 
 三个工具，全部以**当前工作区为根**真实执行（无审批闸门——本应用定位是个人
 agent 控制台；输出与内容都有上限防止刷爆上下文）：
@@ -454,26 +482,26 @@ agent 控制台；输出与内容都有上限防止刷爆上下文）：
 - **Fetch models**（自定义端点或填了 Base URL 时出现）：`fetchModels()` 在 goroutine 里
   `GET {base}/models`（`Authorization: Bearer`），解析 `data[].id` 排序后写回
   `provView.fetched`，经 `a.redraw` 回到 UI 线程；TreeSelect 节点即该列表。
-- **Test connection**：`testConnection()` 走 `piai.Complete` 单轮连通性检查。
+- **Test connection**：`testConnection()` 走 `engine.TestConnection` 单轮连通性检查。
 
-**OpenAI 兼容端点**：`resolveModel()` 对 `openai-compatible` 直接构建
+**OpenAI 兼容端点**：引擎的 `ResolveModel()` 对 `openai-compatible` 直接构建
 `piai.Model{ID, Name, Provider: piai.ProviderOpenAI, API: piai.APIOpenAICompletions,
 BaseURL: 去尾斜杠的用户 URL, ContextWindow: 8192}`（不走注册表）；Base URL 或模型为空报错。
 推理层级对自定义端点默认 `none`（注册表查不到推理能力）。
 
 **Agent 分区 `agentPane(c)`**：系统提示（TextArea）+ 固定工具集说明（bash /
 read_file / write_file，只读展示）+ 停止/状态行。**采样不暴露**——温度 / 最大
-token / 流式开关已移除，一律走 provider 默认（`streamOptions()` 只带 APIKey 与
+token / 流式开关已移除，一律走 provider 默认（引擎的 stream options 只带 APIKey 与
 Reasoning 档位）。
 
 **选 session 永远回到对话**：`openSession` 先 `closeModals()` 再切转录，
 所以开着设置框点左侧 session 也能正常切换并关掉对话框；`newThread` 同样 `closeModals()`。
 
-**持久化（`config.go`）**：保存是**实时**的——`settingsDialogs` 在对话框打开的每一帧
-把 `json.Marshal(a.llm)` 与上次落盘快照 `savedSettings` 比较，漂移即写盘
-（`saveSettingsIfChanged`）；open→closed 转变仍强制最终保存（`Done` / ✕ / 遮罩 /
-Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直接关窗口也不会丢配置**。
-文件写入家目录 `~/.mujicaui-agent-demo/settings.json`（`Busy`/`LastError`/
+**持久化（`persist.go` + `internal/store`）**：保存是**实时**的——`settingsDialogs`
+在对话框打开的每一帧把 `json.Marshal(a.llm)` 与上次落盘快照 `savedSettings` 比较，
+漂移即写盘（`saveSettingsIfChanged`）；open→closed 转变仍强制最终保存（`Done` / ✕ /
+遮罩 / Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直接关窗口也不会丢配置**。
+文件写入家目录 `~/.crux-agent/settings.json`（`Busy`/`LastError`/
 `ProviderOK`/`ConnectionErr` 标 `json:"-"` 不落盘；文件 0600、目录 0700）。
 启动时 `main.go` 调 `loadSettings()` 合并加载：文件缺失/损坏回退默认并记录快照。
 `configPath` 为空（拿不到家目录）时持久化整体禁用。
@@ -496,19 +524,19 @@ Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直�
 
 | kind | 组件 |
 | --- | --- |
-| `rowTyping` | `chat.TypingIndicator(c, "Atlas")` |
+| `rowTyping` | `chat.TypingIndicator(c, "Crux")` |
 | `rowReasoned` | `MessageBubble` → [等待提示（streaming 且无思考/工具/正文时 `TypingIndicator`）+ `ThinkingBlock(&r.thinkOpen, {Thinking: streaming, Started: at})`：思考文本（Selectable）+ `toolCards(r)`（bash→`CommandExecutionCard` 可中止、write_file→`FileChangeCard`、其余→`ToolCallCard`）] + 正文（streaming→`StreamingText`；完成→**`mdView` 可选中 Markdown**）+ `actions` |
 | `rowTools` / `rowCommand` / `rowDiff` | **旧版独立工具行**（合并前存储的转录仍可显示），渲染分支保留 |
 | 默认（用户/纯文本行） | `MessageBubble` → `ui.RichText(Span).Selectable()`（原文逐字、可选中）+ `actions` |
 
-助理消息的 `MessageBubbleOptions{Name:"Atlas"}`。
+助理消息的 `MessageBubbleOptions{Name:"Crux"}`。
 
-### 7.3.1 可选中 Markdown（`mdparse.go` / `mdview.go`）
+### 7.3.1 可选中 Markdown（`internal/md` / `mdview.go`）
 
 MujicaUI 的 `chat.MarkdownView` 构建的文本元素**不可选中**（且解析器在 internal 包，
-无法外部定制），Atlas 自带适配自 mygo-agent 参考渲染器的实现：
+无法外部定制），Crux 自带适配自 mygo-agent 参考渲染器的实现：
 
-- `parseMarkdown(src) []mdBlock`（`mdparse.go`）：块级解析——标题、**散文段
+- `md.Parse(src) []md.Block`（`internal/md`，纯数据处理）：块级解析——标题、**散文段
   （连续段落与空行合并为一个 run，拖选可跨段）**、列表（含有序）、引用、表格、
   围栏/缩进代码、分隔线。
 - `mdView(c, src)`（`mdview.go`）：块缓存挂行元素（`ui.Local`，src 变化重解析），
@@ -519,7 +547,7 @@ MujicaUI 的 `chat.MarkdownView` 构建的文本元素**不可选中**（且解�
 ### 7.4 `actions(c, r)` —— 每条消息下的操作行
 
 自绘小图标按钮（`ui.ButtonBase` 22×22 + `icons.Must`），**不用** `chat.MessageActions`
-（其赞/踩/朗读/分享/编辑按钮 Atlas 不用）：
+（其赞/踩/朗读/分享/编辑按钮 Crux 不用）：
 
 - **复制**（所有消息）：`c.WriteClipboard(r.text)` + toast。
 - **重新生成**（仅助理行）：`regenerate(r)` —— 忙时 toast 提示；否则**删掉该回复及
@@ -536,7 +564,7 @@ Column(Gap 8)
 │       Placeholder,
 │       Actions:() -> chat.SendButton({Shortcut:"Enter", Disabled: draft 空})
 │   })  → Submitted() 也触发 send
-│       （chat/agent 模式选择器已移除——Atlas 固定 Agent 模式）
+│       （chat/agent 模式选择器已移除——Crux 固定 Agent 模式）
 └── Row(Wrap)
     ├── 后端标签（Agent 设置页设定）
     └── chat.TokenCounter(6400, 8000)
@@ -685,9 +713,9 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 **真实事件**驱动；测试与截图用 `convfixture_test.go` 手工构造代表性转录。
 右栏 Repository 标签已全部接真实 git。
 
-### 9.4 工作区存储与切换（`wsstore.go`）
+### 9.4 工作区存储与切换（`persist.go` + `internal/store`）
 
-**默认根**：`homeDir()`（`os.UserHomeDir()`，取不到时回退进程目录）——工作区
+**默认根**：`store.HomeDir()`（`os.UserHomeDir()`，取不到时回退进程目录）——工作区
 **不再**跟随可执行文件的启动目录。
 
 **`openWorkspace(path) string`**（返回 toast 文案）：TrimSpace → `filepath.Abs` →
@@ -701,10 +729,11 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 线程（`threads` 命中用缓存，否则空线程）；找不到则 `sessionID=""` +
 空线程（欢迎页）。
 
-**持久化文件**（**用户家目录** `~/.mujicaui-agent-demo/` 下——Windows 即
-`C:\Users\<你>\.mujicaui-agent-demo\`，**不是** `%AppData%`，也不是 exe 所在目录；
+**持久化文件**（**用户家目录** `~/.crux-agent/` 下——Windows 即
+`C:\Users\<你>\.crux-agent\`，**不是** `%AppData%`，也不是 exe 所在目录；
 0600/0700，路径字段为空即禁用——测试不碰盘。旧版 `%AppData%\MujicaUI-agent-demo\`
-的数据启动时由 `migrateConfigDir` 自动迁移：不覆盖新文件，旧目录保留作备份）：
+与 `~/.mujicaui-agent-demo/` 的数据启动时由 `store.Migrate()` 自动迁移：不覆盖
+新文件，旧目录保留作备份）：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -818,7 +847,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 | 消息体 | `chat.MessageBubble`、自研 `mdView`（可选中 Markdown）、`chat.StreamingText`、`chat.ThinkingBlock`、`chat.TypingIndicator` |
 | 消息操作 | 自绘 `ui.ButtonBase` 图标按钮（copy / regenerate）+ 时间戳 |
 | 输入区 | `chat.PromptComposer`、`chat.SendButton`、`chat.ContextChips`、`chat.TokenCounter` |
-| Markdown | 自研 `mdView`（`mdparse.go`/`mdview.go`，全元素 Selectable）+ `chat.CodeBlock` |
+| Markdown | 自研 `mdView`（`internal/md` 解析 + `mdview.go` 渲染，全元素 Selectable）+ `chat.CodeBlock` |
 | 欢迎 | `chat.WelcomeScreen`、`chat.SuggestionChips`、`chat.CapabilityCard` |
 | Agent 卡 | `agent.ToolCallCard`、`agent.FileChangeCard`、`agent.CommandExecutionCard`、`agent.MultiFileDiffReview` |
 | 仓库 | `git.BranchSelector`、`git.ChangesList`、`git.CommitInput`、`git.CommitList`、`git.DiffViewer`、`git.GitStatusBadge` |
@@ -877,22 +906,31 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
     折叠、其会话不出现；对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
 12. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
    且两条关闭路径都写出 `settings.json`（`configPath` 指向临时目录，不碰真实配置）。
-13. **`TestAgentToolsBash` / `TestAgentToolsReadWrite` / `TestAgentCardsRender` /
-   `TestAgentTurnsMergeIntoOneRow` / `TestShellWrapper`**（`agenttools_test.go`）——
-   bash 真实执行（echo 回显、失败命令带非零退出码）；read/write 往返（缺失文件
-   报错、Details 携带 old/new、覆盖时 Old 为旧内容）；三类工具卡片行 + 思考行
-   headless 渲染；**一次回复合并为一行**（工具调用进该行卡片块、不建新行、完成后
-   清 streaming）；平台 shell 包装正确。
+13. **`TestAgentCardsRender` / `TestAgentTurnsMergeIntoOneRow`**（`agenttools_test.go`）——
+    三类工具卡片行 + 思考行 headless 渲染；**一次回复合并为一行**（工具调用进该行
+    卡片块、不建新行、完成后清 streaming）。
+    **`TestToolsBash` / `TestToolsReadWrite` / `TestShellWrapper` /
+    `TestStreamOptionsSampling` / `TestResolveModelOpenAICompat` / `TestThinkDefault` /
+    `TestRunResolveError`**（`internal/engine`）—— bash 真实执行（echo 回显、失败
+    命令带非零退出码）；read/write 往返（缺失文件报错、Details 携带 old/new、覆盖时
+    Old 为旧内容）；平台 shell 包装；采样不暴露、Reasoning 档位映射、OpenAI 兼容
+    端点解析、未知 provider 快速失败。
 14. **`TestChatPaneLayout`**（`layoutfixed_test.go`）—— 用 `newConversationApp()`
    夹具（`convfixture_test.go`：一条含思考 + 三个工具卡 + Markdown 列表/表格正文
    的合并回复）回归 Row/Stretch 布局塌陷；首帧末行可见、上滚后首行与 Markdown
    元素可见。
-15. **`TestMdParseBlocks` / `TestMdViewRender` / `TestMessageActionsCopyAndTime` /
+15. **`TestMdViewRender` / `TestMessageActionsCopyAndTime` /
    `TestRegenerateRow` / `TestWaitingIndicatorRenders`**（`mdview_test.go`）——
-   解析器块形（散文跨段合并、有序/无序列表、表格、围栏、标题、引用、分隔线）；
    渲染不 panic；**每条消息的复制按钮**（点击 → 剪贴板为该行文本）与时间显示；
    **重新生成**（删回复及其后行、追加新 streaming 行、id 换新、忙时拒绝）；
-   等待首 token 时显示打字点。
+   等待首 token 时显示打字点。**`TestParseBlocks`**（`internal/md`）——
+   解析器块形（散文跨段合并、有序/无序列表、表格、围栏、标题、引用、分隔线）。
+16. **`TestDirMigration` / `TestSettingsRoundtrip` / `TestWsPrefsRoundtrip` /
+   `TestSessionsRoundtrip` / `TestLegacyIndexMigration` /
+   `TestTranscriptPathSanitize`**（`internal/store`）—— 旧目录迁移链
+   （不覆盖新文件、旧目录保留）；settings / workspace / 会话索引 + 每会话转录的
+   落盘往返与损坏回退；旧单文件索引一次性拆分（转录落盘、索引去 rows、原文件留
+   `.bak`、二次运行幂等）；转录路径 id 消毒防目录逃逸。
 
 ---
 
@@ -905,7 +943,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   不回灌到下一轮的 LLM 历史（每轮工具上下文在循环内部完整，跨 send 丢失）。
 - 工具直接作用于真实文件系统（bash 可执行任意命令），**无审批/沙箱闸门**；
   输出 8 KiB、读文件 64 KiB 截断是仅有的护栏。
-- 配置持久化到家目录 `~/.mujicaui-agent-demo/settings.json`（含 API Key 明文，
+- 配置持久化到家目录 `~/.crux-agent/settings.json`（含 API Key 明文，
   文件 0600 / 目录 0700，对话框打开期间实时写盘）；API Key 也可留空走 Provider
   的环境变量。
 - 无窗口（测试）环境 `send()` 落定占位文本，不做真实网络调用。
@@ -917,7 +955,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   python / json / shell / sql），`.md` / `.yaml` / `.html` 等按纯文本渲染；
   格式化仅进程内两种（`.go` gofmt、`.json` 美化），且只影响显示、不写盘。
 - **不引入 LSP**（评估过 terax-clone 的做法：Go 侧 spawn 语言服务器、JSON-RPC
-  over stdio 桥接给 CodeMirror 编辑器）。Atlas 的 `code.CodeViewer` 是只读视图，
+  over stdio 桥接给 CodeMirror 编辑器）。Crux 的 `code.CodeViewer` 是只读视图，
   没有 hover / 补全 / 快速修复的宿主 UI；gopls 生命周期也让无窗口 CI 不可复现。
   若未来需要语言智能，第一步是把诊断接到 `code.ProblemsPanel`，而不是整编辑器。
 - 工作区树根默认用户主目录，可从对话框切换（无系统原生目录选择器，路径需手输
