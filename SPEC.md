@@ -31,7 +31,8 @@ Atlas 把一次编码会话摊开成三块：
 - 单一窗口，`go run .` 即起；对话走 pi-ai-go 的真实 LLM 流式回复。
 - 提供 **Settings 模态框**（`overlay.Dialog`）：左侧源列表切换 Providers（后端/模型/Key/URL，
   支持 OpenAI 兼容端点与拉取模型列表）与 Agent（系统提示/推理/采样/限额）两个分区。
-  配置保存在 app 状态、每次调用时传入，不写磁盘。
+  配置保存在 app 状态、每次调用时传入，并在对话框关闭时持久化到用户配置目录
+  （`settings.json`，见 `config.go`）。
 
 ### 1.2 非目标
 
@@ -122,12 +123,13 @@ require (
 
 | 文件 | 职责 |
 | --- | --- |
-| `main.go` | 入口：`newApp()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
+| `main.go` | 入口：`newApp()`、`loadSettings()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
 | `state.go` | 数据模型：`app` / `thread` / `row` / `repo` / `file` / `session` / `LLMSettings`，种子数据；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。 |
 | `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口）、会话栏、工作区、状态栏；快捷键；会话切换。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`、`actions`、`composer`（展示 `backendLabel`）。 |
 | `llm.go` | **pi-ai-go 集成层**：`resolveModel`（含 OpenAI 兼容端点直建模型）、`historyMessages`、`send`、`startStream`（goroutine 流式）、`streamOptions`、错误/中止处理。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs` + `settingsBody`（左侧源列表 `settingsNavItem` 切换分区）、`providersPane`（provider/model/Key/BaseURL，OpenAI 兼容端点、`fetchModels` 拉取模型、TreeSelect 选模型、Test connection）、`agentPane`（系统提示/推理/温度/限额）。 |
+| `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`，`settings.json` 读写与回退。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `repo.go` | 仓库检视器：分支选择、变更列表、提交历史、Diff / 源码切换。 |
 | `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`、`tokensT` 别名。 |
@@ -342,10 +344,13 @@ Column (Fill, Background)
 标题栏两个图标按钮（`Provider settings` / `Agent settings`）与 ⌘K 的
 `providers` / `agent` 命令打开对话框；关闭走组件自带机制——右上角 ✕、点遮罩、Escape。
 
-**正文 `settingsBody(c)`**：`ui.Row(AlignItems Start)` → 左侧源列表（`ui.Column` 宽 180，
-两条 `settingsNavItem` 可点行，选中项用 `Selection` 底 + `AccentText`）+ 1px 分隔条 +
-右侧 `ui.Column(Grow 1, MinWidth 0)` 按 `a.settingsTab` 渲染 `providersPane` / `agentPane`。
-选左侧行只切分区、不关对话框。
+**正文 `settingsBody(c)`**：`ui.Row(AlignItems Stretch)`，**高度按窗口高度固定**
+（`settingsBodyHeight`：约窗高 62%，钳制在 `[420, 窗高-220]`，保证对话框连同
+标题/按钮始终放得下）——切换 Providers / Agent 分区**不改变对话框高度**；
+左栏（`ui.Column` 宽 180，两条 `settingsNavItem` 可点行，选中项用 `Selection` 底 +
+`AccentText`）+ 1px 分隔条 + 右侧 `ui.Scroll(Grow 1, MinWidth 0)`（分区内容超出
+时在分区内滚动，内部不放 grow 元素）按 `a.settingsTab` 渲染
+`providersPane` / `agentPane`。选左侧行只切分区、不关对话框。
 
 **Providers 分区 `providersPane(c)`**（编辑 `a.llm`，值即时生效）：
 - **Provider**：`input.Select`，选项 = `openai-compatible`（自定义端点）+ pi-ai 内置注册表。
@@ -368,6 +373,14 @@ BaseURL: 去尾斜杠的用户 URL, ContextWindow: 8192}`（不走注册表）�
 
 **选 session 永远回到对话**：`openSession` 先 `closeModals()` 再切转录，
 所以开着设置框点左侧 session 也能正常切换并关掉对话框；`newThread` 同样 `closeModals()`。
+
+**持久化（`config.go`）**：`settingsDialogs` 每帧运行并观察 `settingsOpen` 的
+open→closed 转变——`Done` / ✕ / 遮罩 / Escape 任一关闭路径都落在这一处，触发
+`saveSettings()` 把 `LLMSettings` 写入用户配置目录 `MujicaUI-agent-demo/settings.json`
+（`Busy`/`LastError`/`ProviderOK`/`ConnectionErr` 标 `json:"-"` 不落盘；文件 0600、
+目录 0700）。启动时 `main.go` 调 `loadSettings()` 合并加载：文件缺失/损坏回退默认，
+并预置 `maxTokField` 与 `agentView.seededModel`，使已加载的 MaxTokens 不被
+Agent 分区重播种。`configPath` 为空（拿不到用户配置目录）时持久化整体禁用。
 
 ### 7.2 `threadView(c)`
 
@@ -564,6 +577,11 @@ Column(Fill)
    切回 `c9`、再切回 `c4` → 草稿保留。
 4. **`TestPaletteCommands`** —— 逐个执行 7 条命令且每步可渲染；`diff`/`source` 分别落到
    正确的 `showRepo`/`codeTab`。
+5. **`TestSettingsDialogStableHeight` / `TestSettingsBodyHeight`**（`settings_nav_test.go`）——
+   正文高度由窗高固定：切换分区正文矩形与标题 Y 不变，且随窗口变矮而变矮；钳制函数单测。
+6. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose`**（`config_test.go`）——
+   持久化往返（含 `maxTokField`/seededModel 预置）、瞬态字段不落盘、缺失/损坏回退默认、
+   Escape 关闭对话框即保存。
 
 ---
 
@@ -573,8 +591,8 @@ Column(Fill)
 
 - Agent 回复走 pi-ai-go 真实 LLM，但为**单轮补全**：历史由 `historyMessages()` 从
   对话行重建（仅 user/assistant 文本行），工具调用结果暂不回灌到 LLM 历史。
-- 配置（Provider/Model/Key/BaseURL/系统提示等）保存在 app 状态，运行期内存持有，
-  不写磁盘；重启即回退默认。
+- 配置持久化到用户配置目录 `MujicaUI-agent-demo/settings.json`（含 API Key 明文，
+  文件 0600 / 目录 0700）；API Key 也可留空走 Provider 的环境变量。
 - 无窗口（测试）环境 `send()` 落定占位文本，不做真实网络调用。
 - git 操作只读且为 mock；分支/提交数据不随选择改变源。
 - `StatusBar` 的上下文用量、变更数为固定文案。
@@ -588,4 +606,4 @@ Column(Fill)
 - 用 `chat.ConversationSearch` 给会话栏加搜索，`chat.ConversationItem` 支持重命名/置顶/删除。
 - 接入 pi-ai-go 的 `agent` 层完整工具循环（read/write/bash 等沙箱工具），把
   `send()` 的单轮补全升级为多轮 Agent 循环，并在 `rowTools`/`rowCommand` 里呈现工具事件。
-- 将 API Key 以系统 Keychain / 加密形式持久化，而非明文存 app 状态。
+- 将 API Key 迁移到系统 Keychain / 加密存储（当前为明文 JSON）。

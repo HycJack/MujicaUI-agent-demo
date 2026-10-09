@@ -16,6 +16,7 @@ import (
 
 func main() {
 	a := newApp()
+	a.loadSettings() // restore the persisted LLM backend, if any
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "Atlas — coding agent",

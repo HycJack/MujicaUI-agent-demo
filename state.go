@@ -133,22 +133,23 @@ type file struct {
 }
 
 // LLMSettings carries the pi-ai-go backend configuration the provider and
-// agent dialogs edit. Values are held in app state and passed to the LLM at
-// call time (never written to .env).
+// agent dialogs edit. Values are held in app state, passed to the LLM at
+// call time, and persisted to the user's config directory (config.go);
+// the json tags keep the transient call-state fields out of the file.
 type LLMSettings struct {
-	Provider      string  // known provider id, e.g. "openai"
-	Model         string  // model id, e.g. "gpt-4o"
-	APIKey        string  // API key, passed via StreamOptions.APIKey
-	BaseURL       string  // optional base URL override
-	SystemPrompt  string  // agent system prompt
-	Thinking      string  // thinking level: "none", "low", "medium", "high"
-	Temperature   float64 // sampling temperature, 0..2
-	MaxTokens     int     // max output tokens
-	StreamOutput  bool    // stream the reply into the thread
-	Busy          bool    // a reply is currently streaming
-	LastError     string  // last call error, shown in the status bar
-	ProviderOK    bool    // provider/model resolved OK (last test)
-	ConnectionErr string  // last test-connection error, if any
+	Provider      string  `json:"provider"`
+	Model         string  `json:"model"`
+	APIKey        string  `json:"apiKey,omitempty"`
+	BaseURL       string  `json:"baseUrl,omitempty"`
+	SystemPrompt  string  `json:"systemPrompt"`
+	Thinking      string  `json:"thinking"`
+	Temperature   float64 `json:"temperature"`
+	MaxTokens     int     `json:"maxTokens"`
+	StreamOutput  bool    `json:"streamOutput"`
+	Busy          bool    `json:"-"`
+	LastError     string  `json:"-"`
+	ProviderOK    bool    `json:"-"`
+	ConnectionErr string  `json:"-"`
 }
 
 // settingsPaneOpen toggles the right-hand config inspector.
@@ -180,6 +181,7 @@ type app struct {
 
 	// llm
 	llm          LLMSettings
+	configPath   string             // settings.json path; empty disables persistence
 	settingsOpen bool               // the merged Settings dialog is open
 	settingsTab  string             // which pane: "providers" or "agent"
 	redraw       func(func())       // runs a closure on the UI thread + repaints (win.Update); nil in tests
@@ -205,6 +207,9 @@ func newApp() *app {
 		settingsTab: "providers",
 	}
 	a.llm = a.defaultSettings()
+	if p, err := settingsFile(); err == nil {
+		a.configPath = p
+	}
 	a.provView = defaultProviderView()
 	a.agentView = defaultAgentView()
 	a.thread = seededFor("c9")

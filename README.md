@@ -36,7 +36,8 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   多文件 Diff 评审；无窗口（测试）环境下同步落定占位回复，保持确定性。
 - **Settings 模态框** —— Providers（Provider / 模型 / Key / Base URL，支持 OpenAI
   兼容端点与在线拉取模型列表）与 Agent（系统提示 / 推理层级 / 温度 / 限额）两个分区，
-  值即时生效、仅存内存。
+  值即时生效并持久化到本地（用户配置目录下的 `settings.json`，含 API Key，文件权限 0600），
+  对话框高度固定、切换分区不跳动。
 - **仓库检视器** —— 分支切换、变更列表、提交历史、Diff / 源码分段视图（mock 数据，
   只读演示）。
 - **⌘K 命令面板** —— 新建会话、导出、折叠面板、切换 Diff / 源码等 7 条命令。
@@ -52,7 +53,8 @@ go run .
 ```
 
 启动后在标题栏点 **Provider settings** 图标（或 ⌘K → `Providers`）填入你的
-API key 即可开始对话；配置仅保存在内存中，不会写磁盘。
+API key 即可开始对话；配置在对话框关闭时自动保存到用户配置目录
+（Windows 为 `%AppData%\MujicaUI-agent-demo\settings.json`），下次启动自动加载。
 
 ## Build 构建
 
@@ -84,6 +86,7 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 | `thread.go` | 对话线程：消息列表、各形态消息行、输入区 |
 | `llm.go` | pi-ai-go 集成：模型解析、流式发送、中止与错误处理 |
 | `settings.go` | Settings 模态框：Providers / Agent 两个分区 |
+| `config.go` | 配置持久化：`settings.json` 的加载与保存 |
 | `repo.go` | 仓库检视器：分支、变更、提交、Diff / 源码 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips |
 | `commands.go` | ⌘K 命令面板 |

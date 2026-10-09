@@ -140,10 +140,14 @@ func (a *app) backendLabel() string {
 
 // settingsDialogs builds the single merged Settings modal: a left source-list
 // (Providers / Agent) beside the active pane, the way a settings screen reads.
+// The dialog runs every frame; the open→closed transition it observes is the
+// one place every close path (Done, ✕, backdrop, Escape) lands, so the
+// settings save there.
 func (a *app) settingsDialogs(c *ui.Context) {
+	wasOpen := a.settingsOpen
 	overlay.Dialog(c, &a.settingsOpen, overlay.DialogOptions{
 		Title:       "Settings",
-		Description: "Configure the LLM backend and how Atlas drives it. Values apply live and are kept in app memory only.",
+		Description: "Configure the LLM backend and how Atlas drives it. Values apply live and persist locally across restarts.",
 		Width:       780,
 		Actions: func() {
 			if input.Button(c, "Done", input.ButtonOptions{}).Clicked() {
@@ -151,27 +155,50 @@ func (a *app) settingsDialogs(c *ui.Context) {
 			}
 		},
 	}, func() { a.settingsBody(c) })
+	if wasOpen && !a.settingsOpen {
+		a.saveSettings()
+	}
 }
 
 // settingsBody is the dialog's content: a left source-list choosing the pane
-// and the pane itself on the right, the way a settings screen reads.
+// and the pane itself on the right. The body's height is fixed from the
+// window size, so switching panes never resizes the dialog; a pane taller
+// than the body scrolls inside it.
 func (a *app) settingsBody(c *ui.Context) {
 	k := tokens(c)
-	ui.Row(c).AlignItems(ui.Start).Children(func() {
+	_, wh := c.Size()
+	h := settingsBodyHeight(wh)
+	ui.Row(c).Height(h).AlignItems(ui.Stretch).Label("settings-body").Children(func() {
 		ui.Column(c).Width(180).Shrink(0).Background(k.Surface).Padding(8).Gap(4).Children(func() {
 			a.settingsNavItem(c, k, "providers", "Providers", icons.Must("settings"))
 			a.settingsNavItem(c, k, "agent", "Agent", icons.Must("bot"))
 		})
-		ui.Box(c).Width(1).Background(k.Border).Height(420)
-		ui.Column(c).Grow(1).MinWidth(0).Gap(14).Children(func() {
-			switch a.settingsTab {
-			case "agent":
-				a.agentPane(c)
-			default:
-				a.providersPane(c)
-			}
+		ui.Box(c).Width(1).Shrink(0).Background(k.Border)
+		ui.Scroll(c).Grow(1).MinWidth(0).Children(func() {
+			ui.Column(c).Gap(14).Children(func() {
+				switch a.settingsTab {
+				case "agent":
+					a.agentPane(c)
+				default:
+					a.providersPane(c)
+				}
+			})
 		})
 	})
+}
+
+// settingsBodyHeight maps the window height to the settings body's fixed
+// height: about 62% of the window, clamped so the dialog (header + actions
+// included) always fits inside it.
+func settingsBodyHeight(windowH float32) float32 {
+	h := windowH * 0.62
+	if h < 420 {
+		h = 420
+	}
+	if max := windowH - 220; h > max {
+		h = max
+	}
+	return h
 }
 
 // settingsNavItem is one selectable row in the settings left rail.
