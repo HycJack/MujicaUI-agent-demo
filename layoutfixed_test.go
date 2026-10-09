@@ -16,14 +16,13 @@ import (
 // end, so the LAST rows are the visible ones on the first frame; the top
 // rows are virtualized away and show with real sizes once scrolled to.
 func TestChatPaneLayout(t *testing.T) {
-	a := newApp()
+	a := newConversationApp()
 	tst := ui.NewTester(a.view, 1280, 820)
 	tst.Frame()
 
 	visible := []string{
-		"Watching; I'll post the moment tonight's run passes ten minutes.",                                                 // a4, last row
-		"Fixed and verified: the job now prunes yesterday's dump first, and last night's run finished **green** in 4m12s.", // a3
-		"Nice. Watch it tonight and page me if it slips.",                                                                  // u2
+		"Watching; I'll post the moment tonight's run passes ten minutes.", // a2, last row
+		"Nice. Watch it tonight and page me if it slips.",                  // u2
 		"OpenAI · GPT-4o", // composer backend label
 		"Send",
 	}

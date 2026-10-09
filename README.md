@@ -34,8 +34,10 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 
 - **三栏工作台** —— 会话栏（左，⌘B 折叠）、对话线程（中）、检视器（右，⌘J 折叠）；
   全部由 MyGo 弹性布局原语拼装，标题栏与状态栏齐备。
-- **真实 LLM 流式对话** —— pi-ai-go 统一多模型 SDK：流式正文、思维链、工具调用卡、
-  多文件 Diff 评审；无窗口（测试）环境下同步落定占位回复，保持确定性。
+- **真实 agent 循环（工具执行）** —— pi-ai-go 的 `agent.AgentLoop`：流式正文与思维链之外，
+  agent 可**真实执行** `bash`（终端卡：命令 / 输出 / 退出码 / 耗时，可点停止）、
+  `read_file`（工具调用卡）、`write_file`（before/after 文件变更评审卡），多轮工具
+  调用每轮各占一行；无窗口（测试）环境下同步落定占位回复，保持确定性。
 - **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录）；右栏
   Workspace 标签浏览真实目录（懒加载展开、目录优先排序、跳过 `.git` /
   `node_modules` 等噪音）；**点击文件滑出右侧大抽屉**（720 宽、内容填满）查看
@@ -44,11 +46,12 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 - **会话按工作区组织，侧栏以工作区列表为主体** —— 侧栏大部分高度是工作区列表
   （当前根高亮在首行、最近目录在下、末行 "Open workspace…" 手输入口，`plus`
   打开路径对话框）；点行即切换，树 / git 面板 / 会话上下文随之重根；当前工作区
-  的会话停靠在列表下方（New chat + 会话列表）。
+  的会话停靠在列表下方（New chat + 会话列表）。**首跑无任何演示会话**——空列表 +
+  欢迎页，与真实 agent 控制台一致。
 - **数据持久化** —— 用户配置目录下三个 JSON：`settings.json`（LLM 配置，含
   API Key）、`workspace.json`（当前工作区 + 最近列表）、`sessions.json`
   （**所有工作区的会话与完整对话记录**），重启后原样恢复。
-- **文件附加到对话** —— 预览区、变更列表或 `plus` 按钮把文件加入输入框上方的
+- **文件附加到对话** —— 代码抽屉、变更列表或 `plus` 按钮把文件加入输入框上方的
   上下文 chips；发送时文件内容自动折叠进 LLM 消息（单文件 64 KiB 上限，去重、可移除）。
 - **Repository 真实 git 版本管理** —— 直接管理工作区的 git 仓库：分支切换/新建、
   暂存/未暂存变更分组、行内 stage / unstage 与整组操作、真实 Diff
@@ -57,9 +60,10 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   ⌘K 或刷新按钮重新收集状态。
 - **Settings 模态框** —— Providers（Provider / 模型 / Key / Base URL，支持 OpenAI
   兼容端点与在线拉取模型列表；**Reasoning 思考档位 Off / Low / Medium / High**
-  跟随后端放在此分区）与 Agent（系统提示 / 温度 / 限额）两个分区，
-  值即时生效并持久化到本地（用户配置目录下的 `settings.json`，含 API Key，文件权限 0600），
-  对话框高度固定、切换分区不跳动，正文与分隔线/滚动条留白舒适。
+  跟随后端放在此分区）与 Agent（系统提示 + 固定工具集说明；**不暴露温度 / 限额 /
+  流式开关**，采样走 provider 默认）两个分区，值即时生效并**在对话框打开期间实时
+  落盘**（改完直接关窗口/杀进程也不丢；用户配置目录下的 `settings.json`，含 API Key，
+  文件权限 0600），对话框高度固定、切换分区不跳动，正文与分隔线/滚动条留白舒适。
 - **⌘K 命令面板** —— 新建会话、导出、折叠面板、工作区树、打开工作区、切换
   Diff / 源码等 10 条命令。
 - **消息操作** —— 复制到剪贴板、重新生成、消息反馈。
@@ -74,7 +78,7 @@ go run .
 ```
 
 启动后在标题栏点 **Provider settings** 图标（或 ⌘K → `Providers`）填入你的
-API key 即可开始对话；配置在对话框关闭时自动保存到用户配置目录
+API key 即可开始对话；配置在对话框打开期间**实时保存**到用户配置目录
 （Windows 为 `%AppData%\MujicaUI-agent-demo\` 下的 `settings.json`、
 `workspace.json`、`sessions.json`），下次启动自动恢复工作区、会话与全部对话。
 
@@ -103,11 +107,12 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 | 文件 | 职责 |
 | --- | --- |
 | `main.go` | 入口：窗口创建、心跳 goroutine、`App.Run()` |
-| `state.go` | 数据模型与种子数据（`app` / `thread` / `repo` / `session` / `LLMSettings`） |
-| `shell.go` | 外壳布局：标题栏、会话栏、工作区、状态栏、快捷键 |
-| `thread.go` | 对话线程：消息列表、各形态消息行、输入区 |
-| `llm.go` | pi-ai-go 集成：模型解析、流式发送、中止与错误处理 |
-| `settings.go` | Settings 模态框：Providers / Agent 两个分区 |
+| `state.go` | 数据模型（`app` / `thread` / `row` + `toolRun` / `repo` / `session` / `LLMSettings`） |
+| `shell.go` | 外壳布局：标题栏、工作区列表为主体的会话栏、工作区、状态栏、快捷键 |
+| `thread.go` | 对话线程：消息列表、思考/工具调用/命令执行/文件变更卡片、输入区 |
+| `llm.go` | pi-ai-go **agent 循环**集成：模型解析、多轮工具执行事件 → 对话行、中止与错误处理 |
+| `agenttools.go` | agent 工具集：`bash` / `read_file` / `write_file`（以工作区为根真实执行） |
+| `settings.go` | Settings 模态框：Providers / Agent 两个分区（打开期间实时保存） |
 | `config.go` | 配置持久化：`settings.json` 的加载与保存 |
 | `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 附加到对话 |
 | `drawer.go` | 代码抽屉：右侧 720 宽大尺寸查看器（文件内容 / Diff / 源码，Raw/Fmt 格式化） |

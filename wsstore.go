@@ -203,7 +203,7 @@ func (a *app) loadSessions() {
 			id: ss.ID, title: ss.Title, updated: ss.Updated, pinned: ss.Pinned, ws: ss.Workspace,
 		})
 		if !ss.Threaded {
-			continue // never opened: seededFor regenerates demo transcripts
+			continue // never opened: starts empty when selected
 		}
 		t := thread{mode: ss.Mode}
 		for _, sr := range ss.Rows {
@@ -268,7 +268,7 @@ func (a *app) restoreSession() {
 		if t, ok := a.threads[s.id]; ok {
 			a.thread = t
 		} else {
-			a.thread = seededFor(s.id)
+			a.thread = thread{mode: chat.ModeAgent} // never opened: start empty
 		}
 		return
 	}

@@ -37,6 +37,24 @@ type row struct {
 	llmText   string // what the LLM sees when it differs from text (attached file contents)
 	thinkText string // reasoning text collected while a reply streams
 	at        time.Time
+	tool      *toolRun // real agent tool invocation behind the card rows
+}
+
+// toolRun carries one agent tool invocation for the transcript cards: the
+// tool-call card shows args/result, the command card the terminal run, and
+// the file-change card the before/after of a write.
+type toolRun struct {
+	callID string
+	name   string // bash / read_file / write_file
+	args   string // raw JSON arguments
+	result string // raw JSON result (tool-call card)
+	errMsg string // replaces result when the call failed
+	state  agent.AgentState
+	dur    time.Duration
+
+	run      agent.CommandRun   // bash card
+	decision agent.FileDecision // write_file card review state
+	change   agent.FileChange   // write_file card data
 }
 
 // thread is the working conversation Atlas renders in the center pane.
@@ -49,37 +67,6 @@ type thread struct {
 	rating chat.MessageFeedback
 	think  bool
 	ctx    []chat.ContextItem
-	plan   agent.FileDecision
-	do     agent.FileDecision
-	cmd    agent.CommandRun
-	diff   []agent.FileDecision
-	run    []agent.CommandRun
-}
-
-// seeded builds the demo conversation two days of history shows off the
-// date separators; every row already satisfies MujicaUI's contracts.
-func seeded() thread {
-	now := time.Now()
-	ago := func(d time.Duration) time.Time { return now.Add(-d) }
-	ctx := []chat.ContextItem{
-		{ID: "go.mod", Label: "go.mod", Kind: chat.ContextFile},
-		{ID: "run", Label: "Run #4812", Detail: "CI", Kind: chat.ContextDoc},
-	}
-	return thread{
-		mode:  chat.ModeAgent,
-		model: "atlas",
-		ctx:   ctx,
-		rows: []row{
-			{id: "u1", role: chat.MessageUser, text: "The nightly export failed again. Find out why and fix the job.", at: ago(2 * 24 * time.Hour)},
-			{id: "a1", role: chat.MessageAssistant, kind: rowReasoned, at: ago(2*24*time.Hour - 40*time.Second),
-				text: "The job died on a **quota error** at 02:14 — the archive bucket holds seven days of dumps. I raised the cap and re-ran it."},
-			{id: "a2", role: chat.MessageAssistant, kind: rowTools, at: ago(2*24*time.Hour - 90*time.Second)},
-			{id: "a3", role: chat.MessageAssistant, at: ago(2*24*time.Hour - 2*time.Minute),
-				text: "Fixed and verified: the job now prunes yesterday's dump first, and last night's run finished **green** in 4m12s."},
-			{id: "u2", role: chat.MessageUser, text: "Nice. Watch it tonight and page me if it slips.", at: ago(26 * time.Hour)},
-			{id: "a4", role: chat.MessageAssistant, text: "Watching; I'll post the moment tonight's run passes ten minutes.", at: ago(25*time.Hour + 30*time.Second)},
-		},
-	}
 }
 
 // session is one item of the sessions list; ws is the workspace
@@ -90,28 +77,6 @@ type session struct {
 	updated time.Time
 	pinned  bool
 	ws      string
-}
-
-// seededFor returns the transcript a session opens with; unknown ids
-// (a fresh New-chat session) get the full demo thread.
-func seededFor(id string) thread {
-	now := time.Now()
-	switch id {
-	case "c4":
-		return thread{mode: chat.ModeAgent, model: "atlas", rows: []row{
-			{id: "c4-u1", role: chat.MessageUser, text: "What's our archive retention policy?", at: now.Add(-26 * time.Hour)},
-			{id: "c4-a1", role: chat.MessageAssistant, at: now.Add(-26*time.Hour + 30*time.Second),
-				text: "The bucket keeps **seven days** of dumps; the prune job runs nightly at 02:00 and pages on-call if a run passes ten minutes."},
-		}}
-	case "c1":
-		return thread{mode: chat.ModeChat, model: "swift", rows: []row{
-			{id: "c1-u1", role: chat.MessageUser, text: "Build me a seating chart macro for the gala.", at: now.Add(-40 * 24 * time.Hour)},
-			{id: "c1-a1", role: chat.MessageAssistant, at: now.Add(-40*24*time.Hour + time.Minute),
-				text: "Done — a `seat()` macro that fills by table, then the balcony, skipping the reserved rows."},
-		}}
-	default:
-		return seeded()
-	}
 }
 
 // fmtView is one code pane's formatted-view toggle (gofmt / pretty JSON):
@@ -183,19 +148,16 @@ type fileDrawer struct {
 // call time, and persisted to the user's config directory (config.go);
 // the json tags keep the transient call-state fields out of the file.
 type LLMSettings struct {
-	Provider      string  `json:"provider"`
-	Model         string  `json:"model"`
-	APIKey        string  `json:"apiKey,omitempty"`
-	BaseURL       string  `json:"baseUrl,omitempty"`
-	SystemPrompt  string  `json:"systemPrompt"`
-	Thinking      string  `json:"thinking"`
-	Temperature   float64 `json:"temperature"`
-	MaxTokens     int     `json:"maxTokens"`
-	StreamOutput  bool    `json:"streamOutput"`
-	Busy          bool    `json:"-"`
-	LastError     string  `json:"-"`
-	ProviderOK    bool    `json:"-"`
-	ConnectionErr string  `json:"-"`
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
+	APIKey        string `json:"apiKey,omitempty"`
+	BaseURL       string `json:"baseUrl,omitempty"`
+	SystemPrompt  string `json:"systemPrompt"`
+	Thinking      string `json:"thinking"`
+	Busy          bool   `json:"-"`
+	LastError     string `json:"-"`
+	ProviderOK    bool   `json:"-"`
+	ConnectionErr string `json:"-"`
 }
 
 // settingsPaneOpen toggles the right-hand config inspector.
@@ -205,9 +167,6 @@ func (a *app) defaultSettings() LLMSettings {
 		Model:        "gpt-4o",
 		SystemPrompt: "You are Atlas, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant.",
 		Thinking:     "none",
-		Temperature:  0.7,
-		MaxTokens:    2048,
-		StreamOutput: true,
 	}
 	if m, err := piai.GetModel(piai.KnownProvider(s.Provider), s.Model); err == nil {
 		s.Thinking = thinkDefault(m)
@@ -228,17 +187,16 @@ type app struct {
 	threads   map[string]thread // in-flight transcripts, keyed by session
 
 	// llm
-	llm          LLMSettings
-	configPath   string             // settings.json path; empty disables persistence
-	sessionsPath string             // sessions.json path; empty disables persistence
-	wsPrefsPath  string             // workspace.json path; empty disables persistence
-	settingsOpen bool               // the merged Settings dialog is open
-	settingsTab  string             // which pane: "providers" or "agent"
-	redraw       func(func())       // runs a closure on the UI thread + repaints (win.Update); nil in tests
-	cancelFn     context.CancelFunc // cancels the current streaming reply
-	provView     providerView       // providers config pane state
-	agentView    agentView          // agent config pane state
-	maxTokField  string             // mirrors llm.MaxTokens for the Agent form
+	llm           LLMSettings
+	configPath    string             // settings.json path; empty disables persistence
+	sessionsPath  string             // sessions.json path; empty disables persistence
+	wsPrefsPath   string             // workspace.json path; empty disables persistence
+	settingsOpen  bool               // the merged Settings dialog is open
+	settingsTab   string             // which pane: "providers" or "agent"
+	redraw        func(func())       // runs a closure on the UI thread + repaints (win.Update); nil in tests
+	cancelFn      context.CancelFunc // cancels the current streaming reply
+	provView      providerView       // providers config pane state
+	savedSettings string             // last persisted settings JSON (live-save dirty check)
 
 	// workspace
 	recents      []string // recently opened workspaces, newest first
@@ -252,11 +210,11 @@ type app struct {
 }
 
 func newApp() *app {
+	// No seeded sessions: a fresh install starts with an empty session
+	// list and the welcome screen, like a real agent console.
 	a := &app{
-		sessionID:   "c9",
 		navOpen:     true,
 		repo:        repo{branch: "main"},
-		conv:        chat.ChatConversation{ID: "c9", Title: "Nightly export postmortem", Updated: time.Now().Add(-2 * time.Hour)},
 		settingsTab: "providers",
 	}
 	a.llm = a.defaultSettings()
@@ -268,11 +226,9 @@ func newApp() *app {
 	// persisted choice and wires the store paths (tests keep no paths, so
 	// they never touch disk).
 	a.ws = newWorkspace(homeDir())
-	a.sessions = seedSessions(a.ws.root)
 	a.threads = map[string]thread{}
 	a.provView = defaultProviderView()
-	a.agentView = defaultAgentView()
-	a.thread = seededFor("c9")
+	a.thread = thread{mode: chat.ModeAgent}
 	return a
 }
 
@@ -284,14 +240,3 @@ func (a *app) openProviders() { a.settingsTab, a.settingsOpen = "providers", tru
 
 // openAgent opens the Settings dialog on the Agent pane.
 func (a *app) openAgent() { a.settingsTab, a.settingsOpen = "agent", true }
-
-// seedSessions returns the first-run demo index (newest first), bound to
-// the given workspace.
-func seedSessions(ws string) []session {
-	now := time.Now()
-	return []session{
-		{id: "c9", title: "Nightly export postmortem", updated: now.Add(-2 * time.Hour), ws: ws},
-		{id: "c4", title: "Archive retention policy", updated: now.Add(-26 * time.Hour), ws: ws},
-		{id: "c1", title: "Seating chart macro", updated: now.Add(-40 * 24 * time.Hour), pinned: true, ws: ws},
-	}
-}

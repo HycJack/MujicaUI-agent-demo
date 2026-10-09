@@ -226,9 +226,9 @@ func (a *app) newThread() {
 	a.persistSessions()
 }
 
-// openSession saves the working transcript and loads the chosen one,
-// seeding it the first time it is opened. Selecting a session always brings
-// the user back to the conversation, closing any settings dialog.
+// openSession saves the working transcript and loads the chosen one.
+// Selecting a session always brings the user back to the conversation,
+// closing any settings dialog.
 func (a *app) openSession(id string) {
 	if id == "" || id == a.sessionID {
 		return
@@ -240,7 +240,7 @@ func (a *app) openSession(id string) {
 		a.thread = t
 		return
 	}
-	a.thread = seededFor(id)
+	a.thread = thread{mode: chat.ModeAgent} // never opened: start empty
 	a.persistSessions()
 }
 

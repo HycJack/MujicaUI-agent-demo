@@ -42,7 +42,8 @@ func TestScreenshots(t *testing.T) {
 		}
 	}
 
-	shot("chat-conversation", newApp()) // the seeded "nightly export" thread
+	// A representative agent conversation, built by the shared fixture.
+	shot("chat-conversation", newConversationApp())
 
 	wk := newApp()
 	if wd, err := os.Getwd(); err == nil {

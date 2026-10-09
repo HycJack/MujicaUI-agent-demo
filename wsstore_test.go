@@ -40,7 +40,6 @@ func TestSessionsRoundtrip(t *testing.T) {
 	a := newApp()
 	a.sessionsPath = filepath.Join(dir, "sessions.json")
 	a.ws = newWorkspace(dir)
-	a.sessions = seedSessions(dir)
 	a.newThread() // belongs to dir, persisted
 	a.thread.draft = "hello store"
 	a.send() // persists the transcript rows (headless placeholder reply)
@@ -48,8 +47,8 @@ func TestSessionsRoundtrip(t *testing.T) {
 	b := newApp()
 	b.sessionsPath = a.sessionsPath
 	b.loadSessions()
-	if len(b.sessions) != 4 {
-		t.Fatalf("got %d sessions, want 4 (3 seeds + new chat)", len(b.sessions))
+	if len(b.sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1 (the new chat)", len(b.sessions))
 	}
 	var newID string
 	for _, s := range b.sessions {
@@ -76,7 +75,7 @@ func TestOpenWorkspace(t *testing.T) {
 	dir, other := t.TempDir(), t.TempDir()
 	a := newApp()
 	a.ws = newWorkspace(dir)
-	a.sessions = seedSessions(dir)
+	a.newThread() // the only session of dir
 
 	if msg := a.openWorkspace(filepath.Join(other, "nope")); !strings.Contains(msg, "Not a directory") {
 		t.Fatalf("invalid path toast %q", msg)
@@ -105,8 +104,8 @@ func TestOpenWorkspace(t *testing.T) {
 	if msg := a.openWorkspace(dir); msg == "" {
 		t.Fatal("no toast on switching back")
 	}
-	if a.sessionID != "c9" {
-		t.Fatalf("session not restored: %q", a.sessionID)
+	if a.sessionID == "" {
+		t.Fatal("session not restored after switching back")
 	}
 }
 
@@ -114,11 +113,12 @@ func TestSidebarFiltersSessions(t *testing.T) {
 	dir, other := t.TempDir(), t.TempDir()
 	a := newApp()
 	a.ws = newWorkspace(dir)
-	a.sessions = append(seedSessions(dir),
+	a.newThread()
+	a.sessions = append(a.sessions,
 		session{id: "x1", title: "Other workspace chat", updated: time.Now(), ws: other})
 	tst := ui.NewTester(a.view, 1280, 820)
 	tst.Frame()
-	if !tst.HasText("Nightly export postmortem") {
+	if !tst.HasText("New chat 1") {
 		t.Fatal("the current workspace's session is missing from the list")
 	}
 	if _, ok := tst.Find("Other workspace chat"); ok {
@@ -130,7 +130,6 @@ func TestWorkspaceDialog(t *testing.T) {
 	dir, other := t.TempDir(), t.TempDir()
 	a := newApp()
 	a.ws = newWorkspace(dir)
-	a.sessions = seedSessions(dir)
 	a.openWsDialog()
 	tst := ui.NewTester(a.view, 1280, 820)
 	tst.Frame()

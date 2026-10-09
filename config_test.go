@@ -1,9 +1,10 @@
 package main
 
 // config_test.go covers the settings persistence: a save/load roundtrip
-// keeps the editable fields and the max-tokens mirror, transient call
-// state stays out of the file, a missing or corrupt file falls back to
-// the defaults, and closing the Settings dialog saves.
+// keeps the editable fields, transient call state stays out of the file,
+// a missing or corrupt file falls back to the defaults, and the dialog
+// saves live while open (so killing the app cannot lose the config) and
+// once more on close.
 
 import (
 	"encoding/json"
@@ -23,9 +24,7 @@ func TestSettingsPersistenceRoundtrip(t *testing.T) {
 	a.llm.APIKey = "sk-test"
 	a.llm.BaseURL = "https://api.example.com/v1"
 	a.llm.SystemPrompt = "You are terse."
-	a.llm.Temperature = 0.3
-	a.llm.MaxTokens = 1024
-	a.llm.StreamOutput = false
+	a.llm.Thinking = "high"
 	a.saveSettings()
 
 	b := newApp()
@@ -33,15 +32,8 @@ func TestSettingsPersistenceRoundtrip(t *testing.T) {
 	b.loadSettings()
 	if b.llm.Provider != "deepseek" || b.llm.Model != "deepseek-chat" ||
 		b.llm.APIKey != "sk-test" || b.llm.BaseURL != "https://api.example.com/v1" ||
-		b.llm.SystemPrompt != "You are terse." || b.llm.Temperature != 0.3 ||
-		b.llm.MaxTokens != 1024 || b.llm.StreamOutput {
+		b.llm.SystemPrompt != "You are terse." || b.llm.Thinking != "high" {
 		t.Fatalf("loaded settings drifted: %+v", b.llm)
-	}
-	if b.maxTokField != "1024" {
-		t.Fatalf("max tokens field %q, want \"1024\"", b.maxTokField)
-	}
-	if b.agentView.seededModel != "deepseek/deepseek-chat" {
-		t.Fatalf("loaded model not marked seeded: %q", b.agentView.seededModel)
 	}
 }
 
@@ -69,7 +61,7 @@ func TestSettingsPersistenceFallbacks(t *testing.T) {
 	a := newApp()
 	a.configPath = filepath.Join(dir, "missing", "settings.json")
 	a.loadSettings()
-	if a.llm.Provider != "openai" || a.llm.MaxTokens != 2048 {
+	if a.llm.Provider != "openai" {
 		t.Fatalf("defaults not kept without a file: %+v", a.llm)
 	}
 
@@ -114,5 +106,29 @@ func TestSettingsSaveOnClose(t *testing.T) {
 	}
 	if saved.APIKey != "sk-from-ui" {
 		t.Fatalf("saved API key %q, want \"sk-from-ui\"", saved.APIKey)
+	}
+}
+
+// The dialog saves while it is open, the moment a value drifts — so killing
+// the app (or closing the window with the dialog up) cannot lose the config.
+func TestSettingsLiveSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	a := newApp()
+	a.configPath = path
+	a.openProviders()
+	tst := ui.NewTester(a.view, 1280, 820)
+	tst.Frame()
+	a.llm.APIKey = "sk-live"
+	tst.Frame() // the dialog is still open; the drift must already be on disk
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("live save did not write while open: %v", err)
+	}
+	var saved LLMSettings
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.APIKey != "sk-live" {
+		t.Fatalf("live-saved API key %q, want \"sk-live\"", saved.APIKey)
 	}
 }

@@ -29,22 +29,24 @@ Atlas 把一次编码会话摊开成三块：
 - 展示一个 **真实可交互** 的 Agent 控制台，而非静态组件画廊。
 - 每一个可见控件都绑定行为（发送、切换、复制、切分支、切面板、切模型……）。
 - 全程使用 MujicaUI 的语义组件与主题令牌，不自造调色板。
-- 单一窗口，`go run .` 即起；对话走 pi-ai-go 的真实 LLM 流式回复。
-- 提供 **Settings 模态框**（`overlay.Dialog`）：左侧源列表切换 Providers（后端/模型/Key/URL，
-  支持 OpenAI 兼容端点与拉取模型列表）与 Agent（系统提示/推理/采样/限额）两个分区。
-  配置保存在 app 状态、每次调用时传入，并在对话框关闭时持久化到用户配置目录
-  （`settings.json`，见 `config.go`）。
+- 单一窗口，`go run .` 即起；对话走 pi-ai-go 的 **agent 循环**（多轮 + 工具执行），
+  思考、脚本执行、文件编辑都以真实卡片落入对话流。
+- 提供 **Settings 模态框**（`overlay.Dialog`）：左侧源列表切换 Providers（后端/模型/Key/URL/
+  推理分档，支持 OpenAI 兼容端点与拉取模型列表）与 Agent（系统提示 + 固定工具集说明）
+  两个分区。配置保存在 app 状态、每次调用时传入，并**在对话框打开期间实时持久化**
+  （值一变即写盘，杀进程也不丢；见 `config.go` / `settingsDialogs`）。
+- 首跑无任何种子会话：会话列表为空、显示欢迎页，与真实 agent 控制台一致。
 
 ### 1.2 非目标
 
 - git 走**真实命令**（status / diff / log / stage / unstage / commit / checkout），
-  但不做 push / pull / fetch 等远端操作，也不处理合并冲突；线程内的多文件
-  Diff 评审卡仍是演示数据。
+  但不做 push / pull / fetch 等远端操作，也不处理合并冲突。
 - LLM 配置持久化到用户配置目录（`settings.json`）；工作区选择与全部会话/对话记录
   持久化到同目录（`workspace.json` / `sessions.json`）；"Export / Import" 等仍为
   演示性提示。
-- 工作区树对真实文件系统**只读**（列目录 + 读文件预览 + 附加到对话）；Agent 工具
-  能力沿用 pi-ai-go 的基础形态（对话 + 思维链），未接入文件系统/命令行沙箱工具。
+- 工作区树对真实文件系统**只读**（列目录 + 抽屉查看 + 附加到对话）；agent 的
+  bash / read_file / write_file 工具**直接作用于真实文件系统**（无审批闸门，
+  见 §7.2 的边界说明）。
 
 ---
 
@@ -116,8 +118,9 @@ require (
 - **MujicaUI** —— 组件库（chat / agent / git / code / layout / navigation / icons / core / theme / data / input / account）。
 - **MyGo (`github.com/egoist/mygo`)** —— 原生 UI 与窗口运行时；提供 `ui.Context`、`ui.Element`、
   弹性布局、`ui.View`、`ui.Tester`、`ui.Render`。
-- **pi-ai-go** —— 统一多模型 LLM SDK：`piai.StreamSimpleWithContext` / `Complete` 做流式补全与
-  一次性补全；`piai.GetProviders` / `GetModels` / `GetModel` 读内置模型注册表；
+- **pi-ai-go** —— 统一多模型 LLM SDK：`agent.AgentLoop` 做**多轮 agent 循环**（工具执行 +
+  事件流），`piai.Complete` 做连接测试；`piai.GetProviders` / `GetModels` / `GetModel` 读内置
+  模型注册表；`core.DefaultExecutionEnv` 提供以工作区为根的文件/命令执行环境；
   `_ "pi-ai-go/providers"` 的 `init()` 注册全部内置 Provider（OpenAI / Anthropic / Google /
   Bedrock / DeepSeek / GLM / Kimi 等）。以独立模块 `github.com/HycJack/pi-ai-go` 引入。
 
@@ -128,12 +131,13 @@ require (
 | 文件 | 职责 |
 | --- | --- |
 | `main.go` | 入口：`newApp()`、`loadSettings()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
-| `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`，种子数据；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。 |
-| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口）、会话栏、工作区、状态栏；快捷键；会话切换。 |
-| `thread.go` | 对话线程：`threadView`、`renderRow`、`actions`、`composer`（展示 `backendLabel`）。 |
-| `llm.go` | **pi-ai-go 集成层**：`resolveModel`（含 OpenAI 兼容端点直建模型）、`historyMessages`（用户行优先取 `llmText`）、`send`（附件文件内容折叠进消息）、`attachedFilesBlock`、`startStream`（goroutine 流式）、`streamOptions`、错误/中止处理。 |
-| `settings.go` | **Settings 模态框**：`settingsDialogs` + `settingsBody`（左侧源列表 `settingsNavItem` 切换分区、正文 `PaddingX(22)` 留白）、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档** `reasoningTiers`，OpenAI 兼容端点、`fetchModels` 拉取模型、TreeSelect 选模型、Test connection）、`agentPane`（系统提示/温度/限额）。 |
-| `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`，`settings.json` 读写与回退。 |
+| `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText` 与 `tool *toolRun`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
+| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口）、工作区列表为主体的会话栏、工作区、状态栏；快捷键；会话切换。 |
+| `thread.go` | 对话线程：`threadView`、`renderRow`（思考/文本/工具调用/命令执行/文件变更五类卡片，全部读真实 `row.tool` 数据）、`actions`、`composer`。 |
+| `llm.go` | **pi-ai-go agent 循环集成层**：`resolveModel`、`historyMessages`、`send`（附件折叠）、`startStream`（goroutine 跑 `agent.AgentLoop`）、`agentStream`（事件 → 行：思考/文本增量进当前行，`ToolExecStart/End` 生成/填充工具卡片行，后续轮次追加新助手行）、`agentTools` 工具集挂接、`streamOptions`（仅 APIKey + Reasoning）、错误/中止处理。 |
+| `agenttools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以工作区为根，`write_file` 自动建父目录。 |
+| `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
+| `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查），`settings.json` 读写与回退。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`readCapped` 文件预览（256 KiB 上限）、`previewLang` 高亮映射、`attachFile` 附加到对话、`reloadWorkspace`。 |
 | `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、`sessions.json`（按工作区分组的全部会话与对话记录）、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
@@ -186,36 +190,47 @@ type app struct {
 存储 —— `newApp()` 只设 `configPath`，`sessionsPath`/`wsPrefsPath` 由 `main.go`
 接线，因此测试里的 `newApp()` 从不碰盘。
 
-`newApp()` 构造初始状态：默认会话 `c9`，`navOpen=true`，`repo.branch="main"`，
-`thread=seededFor("c9")`；工作区默认 `homeDir()`（用户主目录，**不是**可执行文件
-所在目录），并 `seedSessions(a.ws.root)` 生成首跑演示会话。`main.go` 随后
-`loadWsPrefs()` → `loadSessions()`（无存储时落种子并立即持久化）→
-`restoreSession()`。
+`newApp()` 构造初始状态：**无种子会话**（`sessionID=""`、`sessions=nil`、空线程），
+`navOpen=true`，`repo.branch="main"`；工作区默认 `homeDir()`（用户主目录，**不是**
+可执行文件所在目录）。`main.go` 随后 `loadWsPrefs()` → `loadSessions()` →
+`restoreSession()`；没有持久化会话时界面停在欢迎页，点 "New chat" 才创建会话。
 
-### 5.2 `row` / `kind` —— 对话行
+### 5.2 `row` / `kind` / `toolRun` —— 对话行
 
 ```go
 type kind int
 const (
     rowPlain     kind = iota // 纯文本（MarkdownView）
     rowReasoned              // 思考块 + StreamingText
-    rowTools                 // 工具调用 + 文件变更卡
+    rowTools                 // 工具调用卡（ToolCallCard）
     rowTyping                // "thinking…" 指示
-    rowCommand               // 终端运行卡
-    rowDiff                  // 多文件 Diff 评审
+    rowCommand               // 终端运行卡（CommandExecutionCard）
+    rowDiff                  // 文件变更评审卡（FileChangeCard）
 )
 
 type row struct {
-    id   string
-    role chat.MessageRole
-    kind kind
-    text string
-    at   time.Time
+    id        string
+    role      chat.MessageRole
+    kind      kind
+    text      string
+    llmText   string   // LLM 视角文本（附件内容折叠）
+    thinkText string   // 思考增量
+    at        time.Time
+    tool      *toolRun // 工具卡片行的真实调用数据
+}
+
+type toolRun struct {
+    callID, name, args, result, errMsg string
+    state  agent.AgentState
+    dur    time.Duration
+    run      muiagent.CommandRun   // bash 卡
+    decision muiagent.FileDecision // write_file 评审状态
+    change   muiagent.FileChange   // write_file 的 Path/Old/New
 }
 ```
 
-> `rowTyping` / `rowCommand` / `rowDiff` 为可扩展形态：渲染分支已就绪，当前默认流程
-> 主要产出 `rowPlain` / `rowReasoned` / `rowTools`。
+> 工具行由 agent 循环的真实事件驱动：`bash` → `rowCommand`、`write_file` →
+> `rowDiff`、其余（`read_file` 等）→ `rowTools`。
 
 ### 5.3 `thread` —— 对话线程状态
 
@@ -237,14 +252,7 @@ type thread struct {
 }
 ```
 
-### 5.4 `seededFor(id)` —— 每会话的种子线程
-
-- `c9` → 完整的“夜间导出复盘”线索（`seeded()`）：两天历史、思考块、工具卡、多轮对话。
-- `c4` → “归档保留策略”问答（2 行）。
-- `c1` → “座位宏”线索，模式为 `ModeChat`、模型 `swift`（2 行）。
-- 其它 id（新建会话）→ 空线程 = 欢迎页。
-
-### 5.5 `repo` —— 检视器状态
+### 5.4 `repo` —— 检视器状态
 
 ```go
 type repo struct {
@@ -260,14 +268,7 @@ type repo struct {
     codeTab  int // Repository 底部：0 = 工作区 Diff，1 = 文件源码
     paneTab  int // 右栏标签：0 = Workspace，1 = Repository
 
-    // 工作区文件预览（目录树选中的文件）
-    psrc             code.CodeViewerState
-    previewPath      string
-    previewLang      string
-    previewText      string
-    previewErr       string
-    previewLoading   bool
-    previewTruncated bool
+    srcFmt fmtView // Repository 源码标签的 Raw/Fmt
 }
 ```
 
@@ -276,11 +277,11 @@ type repo struct {
 （`entries` 与 `files` 平行，携带重命名旧路径等原始信息）/`commits`，以及选中变更的
 `diffKey`/`diffFrom`/`diffTo`/`diffWt`/`diffErr`/`diffLoading`。
 
-工作区树本身在 `workspace`（`workspace.go`）：`root`（`newApp()` 时取 `os.Getwd()`）、
+工作区树本身在 `workspace`（`workspace.go`）：`root`（`newApp()` 时取 `homeDir()`）、
 `nodes map[string]wsNode`（已列目录：子项/状态/错误；文件不注册）、
 `tree data.TreeState[string]`（展开/选中状态）。
 
-### 5.6 `vcsFile` —— 变更条目模型
+### 5.5 `vcsFile` —— 变更条目模型
 
 ```go
 type vcsFile struct {
@@ -295,11 +296,10 @@ type vcsFile struct {
 平行的 `[]vcsFile`：一个文件可同时出现暂存与未暂存两条（`MM`）；`R`/`C` 取
 `old -> new` 的新路径展示。`vcsFile.changed()` 投影回组件模型。
 
-### 5.7 `session` 与种子
+### 5.6 `session` —— 会话索引
 
 `session{id,title,updated,pinned,ws}` —— `ws` 是会话所属工作区（绝对目录），
-会话栏只展示当前工作区的会话。`seedSessions(ws)` 返回绑定到该工作区的首跑
-演示索引（最新在前）。
+会话栏只展示当前工作区的会话。**无种子**：首跑列表为空，"New chat" 创建第一条。
 
 ---
 
@@ -362,33 +362,55 @@ Column (Fill, Background)
 - **`newThread()`** —— `saveSession()` → 生成 `new-N` id → 选中它 → 置空线程 →
   在索引头部插入 `New chat N` 会话（`ws` = 当前工作区）→ `persistSessions()`。
 - **`openSession(id)`** —— 同 id 直接返回；否则 `saveSession()` 后切换 id，命中
-  `threads[id]` 则恢复，否则 `seededFor(id)`，随后 `persistSessions()`。
+  `threads[id]` 则恢复，否则给空线程（欢迎页），随后 `persistSessions()`。
 - **`saveSession()`** —— 把当前 `thread` 存回 `threads[sessionID]`。
 
 ---
 
-## 7. 对话线程（`thread.go`）
+## 7. 对话线程（`thread.go` + `llm.go` + `agenttools.go`）
 
-### 7.1 `send()`（pi-ai-go 流式）
+### 7.1 `send()` → agent 循环
 
-`send()` 现由 `llm.go` 提供，走真实 LLM：
+`send()` 现由 `llm.go` 提供，走 pi-ai-go 的 **agent 循环**（多轮 + 工具执行）：
 
 1. 取 `strings.TrimSpace(draft)`，空或 `a.llm.Busy` 则返回。
-2. 追加用户行（`rowPlain`）。
-3. 追加一条空的 `rowReasoned` 助理行，`list.ScrollToEnd()`。
+2. 附件折叠进 `llmText`（见 §10）后追加用户行。
+3. 追加一条空的 `rowReasoned` 助理行，`list.ScrollToEnd()`，`persistSessions()`。
 4. `startStream(userIdx)`：置 `a.llm.Busy=true`，建 `context.WithCancel` 存到
    `a.cancelFn`，起一个 goroutine：
-   - `resolveModel()` → `piai.GetModel`（含 BaseURL 覆盖）。
-   - `piai.StreamSimpleWithContext(ctx, model, {SystemPrompt, Messages}, opts)`，
-     `opts` 由 `streamOptions()` 组装（`APIKey`、`MaxTokens`、`Reasoning`、`Temperature`）。
-   - `stream.ForEach`：`EventTextDelta` 累加并**按值**回传 UI 线程（`a.redraw`）增量刷新该行；
-     `EventThinkingDelta` 累加思维链；`EventDone` 落定正文与 `thinkText`；`EventError` 报错中止。
-   - 完成后 `a.llm.Busy=false`、清 `cancelFn`。
+   - `resolveModel()` 解析模型；组装 `agent.AgentLoopConfig{Model, SystemPrompt,
+     Tools: a.agentTools(), ToolExecution: ToolExecSequential,
+     ExecEnv: core.NewDefaultExecutionEnvWithDir(a.ws.root), SimpleStreamOptions}`。
+   - `agent.AgentLoop(ctx, historyMessages(), cfg)` 启动循环，`stream.ForEach` 消费
+     `AgentEvent`（由 `agentStream` 承接，行 id 只在 goroutine 侧铸造，UI 线程只见
+     捕获的字符串，无共享索引竞争）：
+     - `EventMessageStart`：首轮复用 `send()` 追加的行；后续轮次（工具结果之后）
+       追加新的 `rowReasoned` 助理行。
+     - `EventMessageUpdate` 内的 `EventThinkingDelta` / `EventTextDelta`：增量刷新
+       当前行（`a.redraw` 按值传字符串）。
+     - `EventToolExecStart{ToolCallID, ToolName, Args}`：按工具名追加卡片行
+       （`bash`→`rowCommand`、`write_file`→`rowDiff`、其余→`rowTools`），状态 Running。
+     - `EventToolExecEnd{Result, IsError}`：按 callID 找到卡片行，落定结果/错误/耗时；
+       bash 填 `CommandRun`（输出 + 退出码），write_file 从 Details 解析 old/new 填
+       `FileChange`。
+     - `EventAgentEnd`：循环收尾。
+   - 完成后（defer）`a.llm.Busy=false`、清 `cancelFn`、`ScrollToEnd`、`persistSessions()`。
 
 > 线程约定：UI 线程持有全部状态。goroutine 只缓冲局部字符串，经
 > `a.redraw(fn)`（即 `win.Update`）把 `fn` 调度回 UI 线程再改状态；闭包**不能**捕获
 > `strings.Builder`（`win.Update` 不等待 `fn`，闭包可能在 goroutine 退出后执行）。
 > `a.redraw==nil`（无窗口 / 测试）时 `send()` 同步落定占位文本，测试保持确定性。
+
+### 7.2 工具集（`agenttools.go`）
+
+三个工具，全部以**当前工作区为根**真实执行（无审批闸门——本应用定位是个人
+agent 控制台；输出与内容都有上限防止刷爆上下文）：
+
+| 工具 | 行为 | 卡片 |
+| --- | --- | --- |
+| `bash` | 平台 shell（Windows `cmd /C`，其它 `sh -c`）执行命令行，stdout+stderr 合并返回，8 KiB 截断；Details 带 `exit` 退出码 | `CommandExecutionCard`（命令/输出/退出码/耗时，可点停止 → `a.cancel()`） |
+| `read_file` | 读文件（相对路径解析到工作区根），64 KiB 截断 | `ToolCallCard`（args/result JSON） |
+| `write_file` | 写文件（自动建父目录），Details 携带 `{path, old, new}` | `FileChangeCard`（before/after diff 评审记录；写入已发生，卡片是留档） |
 
 ### 7.1.1 Settings 模态框（Providers / Agent）
 
@@ -427,19 +449,22 @@ Column (Fill, Background)
 BaseURL: 去尾斜杠的用户 URL, ContextWindow: 8192}`（不走注册表）；Base URL 或模型为空报错。
 推理层级对自定义端点默认 `none`（注册表查不到推理能力）。
 
-**Agent 分区 `agentPane(c)`**：系统提示、温度、最大 token、流式输出
-（编辑 `a.llm`；推理档位已移至 Providers）。
+**Agent 分区 `agentPane(c)`**：系统提示（TextArea）+ 固定工具集说明（bash /
+read_file / write_file，只读展示）+ 停止/状态行。**采样不暴露**——温度 / 最大
+token / 流式开关已移除，一律走 provider 默认（`streamOptions()` 只带 APIKey 与
+Reasoning 档位）。
 
 **选 session 永远回到对话**：`openSession` 先 `closeModals()` 再切转录，
 所以开着设置框点左侧 session 也能正常切换并关掉对话框；`newThread` 同样 `closeModals()`。
 
-**持久化（`config.go`）**：`settingsDialogs` 每帧运行并观察 `settingsOpen` 的
-open→closed 转变——`Done` / ✕ / 遮罩 / Escape 任一关闭路径都落在这一处，触发
-`saveSettings()` 把 `LLMSettings` 写入用户配置目录 `MujicaUI-agent-demo/settings.json`
-（`Busy`/`LastError`/`ProviderOK`/`ConnectionErr` 标 `json:"-"` 不落盘；文件 0600、
-目录 0700）。启动时 `main.go` 调 `loadSettings()` 合并加载：文件缺失/损坏回退默认，
-并预置 `maxTokField` 与 `agentView.seededModel`，使已加载的 MaxTokens 不被
-Agent 分区重播种。`configPath` 为空（拿不到用户配置目录）时持久化整体禁用。
+**持久化（`config.go`）**：保存是**实时**的——`settingsDialogs` 在对话框打开的每一帧
+把 `json.Marshal(a.llm)` 与上次落盘快照 `savedSettings` 比较，漂移即写盘
+（`saveSettingsIfChanged`）；open→closed 转变仍强制最终保存（`Done` / ✕ / 遮罩 /
+Escape 任一关闭路径都覆盖）。这样**开着对话框杀进程 / 直接关窗口也不会丢配置**。
+文件写入用户配置目录 `MujicaUI-agent-demo/settings.json`（`Busy`/`LastError`/
+`ProviderOK`/`ConnectionErr` 标 `json:"-"` 不落盘；文件 0600、目录 0700）。
+启动时 `main.go` 调 `loadSettings()` 合并加载：文件缺失/损坏回退默认并记录快照。
+`configPath` 为空（拿不到用户配置目录）时持久化整体禁用。
 
 ### 7.2 `threadView(c)`
 
@@ -452,14 +477,14 @@ Agent 分区重播种。`configPath` 为空（拿不到用户配置目录）时�
 
 ### 7.3 `renderRow(c, r)`
 
-按 `kind` 渲染：
+按 `kind` 渲染（工具卡片全部读 `r.tool` 的真实调用数据）：
 
 | kind | 组件 |
 | --- | --- |
 | `rowTyping` | `chat.TypingIndicator(c, "Atlas")` |
-| `rowTools` | `MessageBubble` → `agent.ToolCallCard` + `agent.FileChangeCard`（`Preview:4`） |
-| `rowCommand` | `MessageBubble` → `agent.CommandExecutionCard`（可中止：改 `ExitCode=130` 并追加中止输出） |
-| `rowDiff` | `MessageBubble` → `agent.MultiFileDiffReview(&diff, filesChanged, …)` |
+| `rowTools` | `MessageBubble` → `agent.ToolCallCard{ID, Name, Args, Result, Error, State, Duration}` |
+| `rowCommand` | `MessageBubble` → `agent.CommandExecutionCard(run)`；`Changed()`（用户点停止）→ `a.cancel()` 中止 agent 循环 |
+| `rowDiff` | `MessageBubble` → `agent.FileChangeCard(&decision, change, {Preview:4})` |
 | `rowReasoned` | `MessageBubble` → `chat.ThinkingBlock(&think,…)` + `chat.StreamingText(Streaming:true)` + `actions` |
 | 默认 | `MessageBubble` → `chat.MarkdownView(text)` + `actions` |
 
@@ -615,7 +640,8 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 
 ### 9.3 演示数据边界
 
-`thread.go` 的 `filesChanged`（线程内 `MultiFileDiffReview` 卡）仍是演示数据；
+对话内的所有卡片（思考 / 工具调用 / 命令执行 / 文件变更）均由 agent 循环的
+**真实事件**驱动；测试与截图用 `convfixture_test.go` 手工构造代表性转录。
 右栏 Repository 标签已全部接真实 git。
 
 ### 9.4 工作区存储与切换（`wsstore.go`）
@@ -631,7 +657,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 `saveWsPrefs` + `persistSessions` → toast "Workspace: <目录名>"。
 
 **`restoreSession()`**：按存储顺序找第一个 `ws == 当前根` 的会话，选中并恢复其
-线程（`threads` 命中用缓存，否则 `seededFor`）；找不到则 `sessionID=""` +
+线程（`threads` 命中用缓存，否则空线程）；找不到则 `sessionID=""` +
 空线程（欢迎页）。
 
 **持久化文件**（用户配置目录 `MujicaUI-agent-demo/` 下，0600/0700，路径字段为空
@@ -641,7 +667,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 | --- | --- |
 | `settings.json` | LLM 配置（原有，不变） |
 | `workspace.json` | `{current, recents[]}` —— 当前工作区 + 最近列表（去重、上限 6，载入时当前根置顶） |
-| `sessions.json` | `{sessions:[{id,title,updated,pinned,workspace,mode,threaded,rows[]}]}` —— 全部工作区的会话与对话记录；`threaded` 标记是否存过线程（未打开过的演示会话由 `seededFor` 再生） |
+| `sessions.json` | `{sessions:[{id,title,updated,pinned,workspace,mode,threaded,rows[]}]}` —— 全部工作区的会话与对话记录；`threaded` 标记是否存过线程（未打开过的会话选中时给空线程/欢迎页） |
 
 **写入时机**：`newThread` / `openSession` / `send`（用户行落库）/ `applyReply`
 （回复完成）/ `streamError` / `openWorkspace`。`persistSessions` 对当前会话取
@@ -703,9 +729,12 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 
 ## 12. 交互清单（验收点）
 
-- [ ] 输入一句话回车 → 追加用户行 + 思考/正文 + 工具行，列表滚到底。
+- [ ] **首跑无种子**：会话列表为空、显示欢迎页；`New chat` 创建第一条会话。
+- [ ] 输入一句话回车 → 用户行 + 助理行流式思考/正文；agent 需要时**真实执行工具**：
+  bash 命令出现终端卡（输出/退出码/耗时）、写文件出现 before/after 评审卡、
+  读文件出现工具调用卡；多轮时每轮各占一行；列表滚到底。
 - [ ] `New chat` / ⌘N → 清空到欢迎页；能力卡示例可填入草稿；starter chip 可即发。
-- [ ] 会话列表切到 `c4` / `c1` → 内容随之变化；切走再切回保留草稿。
+- [ ] 会话列表切换 → 内容随之变化；切走再切回保留草稿。
 - [ ] 侧栏以**工作区列表为主体**：当前根高亮在首行、recents 在下、末行
   "Open workspace…"；点行即切换；`plus` 打开路径对话框；Sessions 停靠底部
   （固定高 220）只列当前工作区的会话；重启后恢复上次工作区与会话
@@ -716,18 +745,20 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 - [ ] ⌘B / ⌘J 折叠左栏 / 右栏；标题栏两个按钮同效。
 - [ ] ⌘K 打开面板；9 条命令各自生效。
 - [ ] Workspace 标签：树列出真实目录（目录在前、噪音目录跳过）；展开子目录懒加载；
-  点文件在下方预览源码；`plus` 按钮把文件附加到对话（composer 出现 chip，发送后
+  点文件滑出抽屉查看；抽屉 `Attach` 按钮把文件附加到对话（composer 出现 chip，发送后
   内容进入 LLM 消息）；刷新按钮重载；状态栏显示工作区名。
 - [ ] Repository 标签（真实 git）：列出真实分支/变更/历史；行内按钮 stage/unstage、
   组按钮全部暂存/取消；选中变更驱动 Diff（暂存= HEAD vs index，未暂存= index vs 工作区）；
   提交输入写标题后 Commit 真实提交；切分支/建分支生效；刷新按钮重收状态。
 - [ ] Settings：正文与分隔线/滚动条留白（`PaddingX(22)`）；Reasoning 在 Providers
-  分区且为 Off/Low/Medium/High 四档；Agent 分区不再有推理项；分区切换高度不变。
+  分区且为 Off/Low/Medium/High 四档；Agent 分区只有系统提示 + 工具说明（无温度/
+  限额/流式开关）；分区切换高度不变；**配置在对话框打开期间实时落盘**
+  （改完直接杀进程，重启后配置仍在）。
 - [ ] 代码查看：树点击打开大抽屉（宽 720、内容填满）；`.go`/`.json` 出现 Raw/Fmt
   分段，Fmt 显示 gofmt/美化内容（不写盘）；`.jsx`/`.zsh` 等映射高亮；仓库面板
   `maximize` 放大 Diff/源码。
 - [ ] 助理消息：复制写入剪贴板；重新生成有反馈。
-- [ ] 终端运行卡在 `rowCommand` 形态下可中止。
+- [ ] 终端运行卡点停止 → agent 循环中止（Busy 清除）。
 
 ---
 
@@ -761,17 +792,17 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 
 1. **`TestViewRenders`** —— 对 `showRepo ∈ {false,true}` × `codeTab ∈ {0,1}` 共 4 种组合渲染，
    断言非 nil（捕捉布局 panic / 组件契约缺失）。
-2. **`TestSendAndNewChat`** —— `send()` 追加恰 3 行、清空草稿、末行是 `rowTools`；
-   `newThread()` 后行数为 0 且欢迎页可渲染。
-3. **`TestSessionSwitch`** —— `openSession("c4")` 载入 2 行；改动 `c4` 草稿、`saveSession`、
-   切回 `c9`、再切回 `c4` → 草稿保留。
+2. **`TestSendAndNewChat`** —— `send()` 追加恰 2 行（用户 + 助理占位）、清空草稿、
+   末行 `rowReasoned` 且 headless 落定占位文本；`newThread()` 后行数为 0 且欢迎页可渲染。
+3. **`TestSessionSwitch`** —— 连建两个会话、在第一个里改草稿并 `saveSession`，
+   切走再切回 → 草稿保留；切换关闭打开中的设置对话框。
 4. **`TestPaletteCommands`** —— 逐个执行 10 条命令且每步可渲染；`workspace`/`diff`/`source`
    分别落到正确的 `showRepo`/`paneTab`/`codeTab`，`workspace-open` 打开工作区对话框。
 5. **`TestSettingsDialogStableHeight` / `TestSettingsBodyHeight`**（`settings_nav_test.go`）——
    正文高度由窗高固定：切换分区正文矩形与标题 Y 不变，且随窗口变矮而变矮；钳制函数单测。
-6. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose`**（`config_test.go`）——
-   持久化往返（含 `maxTokField`/seededModel 预置）、瞬态字段不落盘、缺失/损坏回退默认、
-   Escape 关闭对话框即保存。
+6. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose` / `TestSettingsLiveSave`**
+   （`config_test.go`）—— 持久化往返、瞬态字段不落盘、缺失/损坏回退默认、
+   Escape 关闭对话框即保存、**对话框开着时值一漂移即写盘**。
 7. **`TestListDir` / `TestWorkspaceLazyLoad` / `TestWorkspacePreview` /
    `TestWorkspaceTreeRender` / `TestWorkspaceCommands`**（`workspace_test.go`）——
    用 `t.TempDir()` 造真实目录：列举排序（目录在前、大小写不敏感）与忽略规则；
@@ -797,6 +828,13 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
     会话不出现）；对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
 12. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
    且两条关闭路径都写出 `settings.json`（`configPath` 指向临时目录，不碰真实配置）。
+13. **`TestAgentToolsBash` / `TestAgentToolsReadWrite` / `TestAgentCardsRender` /
+   `TestShellWrapper`**（`agenttools_test.go`）—— bash 真实执行（echo 回显、失败命令
+   带非零退出码）；read/write 往返（缺失文件报错、Details 携带 old/new、覆盖时 Old
+   为旧内容）；三类工具卡片行 + 思考行 headless 渲染；平台 shell 包装正确。
+14. **`TestChatPaneLayout`**（`layoutfixed_test.go`）—— 用 `newConversationApp()`
+   夹具（`convfixture_test.go`：用户行 + 思考行 + bash 卡 + 工具卡 + 变更卡）回归
+   Row/Stretch 布局塌陷；首帧末行可见、上滚后首行可见。
 
 ---
 
@@ -804,10 +842,14 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 
 **限制**
 
-- Agent 回复走 pi-ai-go 真实 LLM，但为**单轮补全**：历史由 `historyMessages()` 从
-  对话行重建（仅 user/assistant 文本行），工具调用结果暂不回灌到 LLM 历史。
+- Agent 走 pi-ai-go 的 **agent 循环**（多轮 + 工具执行）；跨轮历史由
+  `historyMessages()` 从对话行重建（仅 user/assistant 文本行），工具调用与结果
+  不回灌到下一轮的 LLM 历史（每轮工具上下文在循环内部完整，跨 send 丢失）。
+- 工具直接作用于真实文件系统（bash 可执行任意命令），**无审批/沙箱闸门**；
+  输出 8 KiB、读文件 64 KiB 截断是仅有的护栏。
 - 配置持久化到用户配置目录 `MujicaUI-agent-demo/settings.json`（含 API Key 明文，
-  文件 0600 / 目录 0700）；API Key 也可留空走 Provider 的环境变量。
+  文件 0600 / 目录 0700，对话框打开期间实时写盘）；API Key 也可留空走 Provider
+  的环境变量。
 - 无窗口（测试）环境 `send()` 落定占位文本，不做真实网络调用。
 - git 走真实命令，但只覆盖本地操作（status/diff/log/add/restore/commit/checkout）：
   无 push / pull / fetch，不做合并冲突处理；`git restore --staged` 需要 git ≥ 2.23。
@@ -839,6 +881,6 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   `internal/lsp` JSON-RPC 会话管理）。
 - 借助 `core.Settings{Light/Dark}` 做运行时亮暗切换按钮。
 - 用 `chat.ConversationSearch` 给会话栏加搜索，`chat.ConversationItem` 支持重命名/置顶/删除。
-- 接入 pi-ai-go 的 `agent` 层完整工具循环（read/write/bash 等沙箱工具），把
-  `send()` 的单轮补全升级为多轮 Agent 循环，并在 `rowTools`/`rowCommand` 里呈现工具事件。
+- 工具审批闸门（`BeforeToolCall` 钩子 + 权限弹窗）、工具结果回灌跨轮历史、
+  `EventToolExecUpdate` 流式输出、更多工具（list_dir / grep / edit 补丁式修改）。
 - 将 API Key 迁移到系统 Keychain / 加密存储（当前为明文 JSON）。

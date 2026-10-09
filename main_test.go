@@ -76,23 +76,18 @@ func TestSendAndNewChat(t *testing.T) {
 // settings dialog, and switching back keeps the edits made in between.
 func TestSessionSwitch(t *testing.T) {
 	a := newApp()
+	a.newThread() // s1
+	a.thread.draft = "first"
+	a.saveSession()
+	a.newThread()     // s2
 	a.openProviders() // open a dialog, then switch: it must close
-	a.openSession("c4")
-	if a.sessionID != "c4" || len(a.thread.rows) != 2 {
-		t.Fatalf("c4 opened with %d rows (id %q), want 2", len(a.thread.rows), a.sessionID)
+	first := a.sessions[len(a.sessions)-1].id
+	a.openSession(first)
+	if a.sessionID != first || a.thread.draft != "first" {
+		t.Fatalf("session %q not restored (id %q draft %q)", first, a.sessionID, a.thread.draft)
 	}
 	if a.settingsOpen {
 		t.Fatal("switching sessions should close the open settings dialog")
-	}
-	a.thread.draft = "and the cold archive?"
-	a.saveSession()
-	a.openSession("c9")
-	if a.thread.rows[0].text == "" || a.sessionID != "c9" {
-		t.Fatalf("c9 not restored (id %q)", a.sessionID)
-	}
-	a.openSession("c4")
-	if a.thread.draft != "and the cold archive?" {
-		t.Fatalf("c4 draft %q not preserved", a.thread.draft)
 	}
 }
 
@@ -165,13 +160,13 @@ func TestProviderRebind(t *testing.T) {
 	}
 }
 
-// The agent dialog surfaces the configured backend; reasoning lives in the
-// Providers pane as a fixed tier ladder.
+// The agent dialog surfaces the system prompt and the fixed toolset;
+// reasoning lives in the Providers pane as a fixed tier ladder, and the
+// sampling knobs (temperature / max tokens / stream toggle) are gone.
 func TestAgentSettings(t *testing.T) {
 	a := newApp()
 	a.openAgent()
 	a.llm.SystemPrompt = "You are terse."
-	a.llm.Temperature = 0.2
 	if ui.Render(a.view, 1280, 820, 1) == nil {
 		t.Fatal("agent render returned nil")
 	}
@@ -181,11 +176,11 @@ func TestAgentSettings(t *testing.T) {
 	if reasoningTiers[0].Value != "none" || reasoningTiers[3].Value != "high" {
 		t.Fatalf("unexpected tier values: %v", reasoningTiers)
 	}
-	// max tokens sync from the field
-	a.maxTokField = "4096"
-	a.syncMaxTokens()
-	if a.llm.MaxTokens != 4096 {
-		t.Fatalf("MaxTokens=%d, want 4096", a.llm.MaxTokens)
+	// Sampling is not configurable: the options carry no temperature or
+	// token cap, only the key and the reasoning tier.
+	opts := a.streamOptions()
+	if opts.Temperature != nil || opts.MaxTokens != nil {
+		t.Fatal("stream options should leave sampling to the provider defaults")
 	}
 }
 

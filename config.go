@@ -8,7 +8,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -44,15 +43,11 @@ func (a *app) loadSettings() {
 		log.Printf("atlas: settings ignored (%v): %s", err, a.configPath)
 		return
 	}
-	// The Agent pane mirrors MaxTokens in a text field and seeds it once
-	// per provider/model; mark the loaded model seeded so the loaded
-	// value survives the first render.
-	a.maxTokField = fmt.Sprintf("%d", a.llm.MaxTokens)
-	a.agentView.seededModel = a.llm.Provider + "/" + a.llm.Model
+	a.savedSettings = string(data)
 }
 
-// saveSettings writes the current LLM settings to disk; called whenever
-// the Settings dialog closes.
+// saveSettings writes the current LLM settings to disk and snapshots the
+// written form so the dialog's live-save dirty check stays quiet.
 func (a *app) saveSettings() {
 	if a.configPath == "" {
 		return
@@ -67,5 +62,7 @@ func (a *app) saveSettings() {
 	}
 	if err := os.WriteFile(a.configPath, data, 0o600); err != nil {
 		log.Printf("atlas: settings not saved: %v", err)
+		return
 	}
+	a.savedSettings = string(data)
 }

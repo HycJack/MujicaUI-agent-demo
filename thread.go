@@ -16,14 +16,6 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// filesChanged seeds the last tool row's diff set so the review has
-// something to leaf through.
-var filesChanged = []agent.FileChange{
-	{Path: "jobs/export-nightly.sh", Old: "build dump\nupload dump\n", New: "build dump\nprune yesterday\nupload dump\n"},
-	{Path: "jobs/quota.go", Old: "cap = 7\n", New: "cap = 14\n"},
-	{Path: "docs/runbook.md", Old: "The bucket keeps 7 days.\n"},
-}
-
 // threadView is the center pane: the message list over the composer.
 func (a *app) threadView(c *ui.Context) {
 	k := tokens(c)
@@ -43,40 +35,39 @@ func (a *app) threadView(c *ui.Context) {
 	})
 }
 
-// renderRow paints one transcript row by kind.
+// renderRow paints one transcript row by kind. The tool rows render the
+// real agent invocation stored on the row; the assistant rows render the
+// streamed thinking and text.
 func (a *app) renderRow(c *ui.Context, r *row) {
 	switch r.kind {
 	case rowTyping:
 		chat.TypingIndicator(c, "Atlas")
 	case rowTools:
+		t := r.tool
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
 			agent.ToolCallCard(c, agent.ToolCall{
-				ID: "call-1", Name: "read_file",
-				Args:   `{"path":"var/log/export-nightly.log","tail":40}`,
-				Result: `{"lines":40,"error":"quota exceeded"}`,
-				State:  agent.AgentDone, Duration: 420 * time.Millisecond,
+				ID: t.callID, Name: t.name, Args: t.args, Result: t.result,
+				Error: t.errMsg, State: t.state, Duration: t.dur,
 			}, agent.ToolCallCardOptions{})
-			agent.FileChangeCard(c, &a.thread.plan, agent.FileChange{
-				Path: "jobs/export-nightly.sh",
-				Old:  "build dump\nupload dump\n",
-				New:  "build dump\nprune yesterday\nupload dump\n",
-			}, agent.FileChangeCardOptions{Preview: 4})
 		})
 	case rowCommand:
+		t := r.tool
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
-			if agent.CommandExecutionCard(c, a.thread.cmd, agent.CommandExecutionCardOptions{}).Changed() {
-				a.thread.cmd.Running, a.thread.cmd.ExitCode = false, 130
-				a.thread.cmd.Output += "\x1b[31maborted by user\x1b[0m\n"
+			// Changed requests an abort: stop the in-flight agent loop.
+			if agent.CommandExecutionCard(c, t.run, agent.CommandExecutionCardOptions{}).Changed() {
+				a.cancel()
 			}
 		})
 	case rowDiff:
+		t := r.tool
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
-			agent.MultiFileDiffReview(c, &a.thread.diff, filesChanged, agent.MultiFileDiffReviewOptions{})
+			// The write already happened; the card is the review record.
+			agent.FileChangeCard(c, &t.decision, t.change, agent.FileChangeCardOptions{Preview: 4})
 		})
 	case rowReasoned:
 		chat.MessageBubble(c, r.role, chat.MessageBubbleOptions{Name: "Atlas"}, func() {
 			if r.thinkText != "" {
-				chat.ThinkingBlock(c, &a.thread.think, chat.ThinkingBlockOptions{Elapsed: 6 * time.Second}, func() {
+				chat.ThinkingBlock(c, &a.thread.think, chat.ThinkingBlockOptions{}, func() {
 					ui.Text(c, r.thinkText)
 				})
 			}

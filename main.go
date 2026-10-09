@@ -25,10 +25,6 @@ func main() {
 	}
 	a.loadWsPrefs() // restore the last workspace (default: the home directory)
 	a.loadSessions()
-	if len(a.sessions) == 0 {
-		a.sessions = seedSessions(a.ws.root)
-		a.persistSessions()
-	}
 	a.restoreSession()
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{

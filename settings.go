@@ -3,11 +3,11 @@ package main
 // settings.go adds the Settings dialog the frontend needs: one modal with a
 // left source-list (Providers / Agent). Providers lets the user pick the
 // pi-ai backend (a known provider or a custom OpenAI-compatible endpoint),
-// model (fetched list or registry), API key and base URL, and test the
-// connection. Agent holds the system prompt, reasoning level, sampling, max
-// tokens and streaming. Both panes edit a.llm directly — values apply live,
-// the way the rest of Atlas renders state — and the dialog opens from the
-// titlebar or the ⌘K palette.
+// model (fetched list or registry), API key, base URL, reasoning tier, and
+// test the connection. Agent holds the system prompt and the fixed toolset
+// description. Both panes edit a.llm directly — values apply live and are
+// saved the moment they change (see settingsDialogs) — and the dialog opens
+// from the titlebar or the ⌘K palette.
 
 import (
 	"context"
@@ -40,14 +40,6 @@ type providerView struct {
 
 // defaultProviderView returns the Providers pane's initial UI state.
 func defaultProviderView() providerView { return providerView{} }
-
-// agentView is the Agent pane's transient UI state.
-type agentView struct {
-	seededModel string // provider·model the max-tokens field was last seeded for
-}
-
-// defaultAgentView returns the Agent pane's initial UI state.
-func defaultAgentView() agentView { return agentView{} }
 
 // knownProviderOptions builds the provider <select> choices: the OpenAI-
 // compatible custom endpoint first, then pi-ai's registered providers, ordered
@@ -140,9 +132,11 @@ func (a *app) backendLabel() string {
 
 // settingsDialogs builds the single merged Settings modal: a left source-list
 // (Providers / Agent) beside the active pane, the way a settings screen reads.
-// The dialog runs every frame; the open→closed transition it observes is the
-// one place every close path (Done, ✕, backdrop, Escape) lands, so the
-// settings save there.
+// The dialog runs every frame. Saving is live: while the dialog is open the
+// marshaled settings are compared against the last persisted snapshot each
+// frame and written on drift, so closing the window — or killing the process
+// — with the dialog open can no longer lose the configuration. The open→closed
+// transition still forces a final save for every close path.
 func (a *app) settingsDialogs(c *ui.Context) {
 	wasOpen := a.settingsOpen
 	overlay.Dialog(c, &a.settingsOpen, overlay.DialogOptions{
@@ -155,9 +149,22 @@ func (a *app) settingsDialogs(c *ui.Context) {
 			}
 		},
 	}, func() { a.settingsBody(c) })
+	if a.settingsOpen {
+		a.saveSettingsIfChanged()
+	}
 	if wasOpen && !a.settingsOpen {
 		a.saveSettings()
 	}
+}
+
+// saveSettingsIfChanged persists the settings when their marshaled form has
+// drifted from the last snapshot. Cheap: the struct is a handful of strings.
+func (a *app) saveSettingsIfChanged() {
+	buf, err := json.Marshal(a.llm)
+	if err != nil || string(buf) == a.savedSettings {
+		return
+	}
+	a.saveSettings()
 }
 
 // settingsBody is the dialog's content: a left source-list choosing the pane
@@ -446,27 +453,15 @@ func (a *app) rebindModel() {
 	a.applyModelDefaults()
 }
 
-// applyModelDefaults seeds MaxTokens from the resolved model and resets the
-// reasoning level when the model cannot reason.
+// applyModelDefaults resets the reasoning level when the model cannot
+// reason. Sampling is left to the provider defaults.
 func (a *app) applyModelDefaults() {
 	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
 	if err != nil {
 		return
 	}
-	if m.MaxTokens > 0 {
-		a.llm.MaxTokens = m.MaxTokens
-		a.maxTokField = fmt.Sprintf("%d", m.MaxTokens)
-	}
 	if !m.Reasoning {
 		a.llm.Thinking = "none"
-	}
-}
-
-// syncMaxTokens copies the max-tokens field into the settings each frame so
-// edits take effect; the field stays the editing source of truth.
-func (a *app) syncMaxTokens() {
-	if n := parseMaxTokens(a.maxTokField); n >= 64 {
-		a.llm.MaxTokens = n
 	}
 }
 
@@ -519,30 +514,32 @@ func (a *app) runConnectionTest() (bool, string) {
 	return true, ""
 }
 
-// agentPane is the Agent dialog's content.
+// agentPane is the Agent dialog's content: the system prompt and the
+// agent-loop facts. Sampling (temperature / max tokens) is left to the
+// provider defaults — an agent console has no business tuning them.
 func (a *app) agentPane(c *ui.Context) {
+	k := tokens(c)
 	ui.Column(c).Gap(14).Children(func() {
 		// System prompt
 		input.FormField(c, "System prompt", input.FormFieldOptions{Description: "Shapes role and tone for every reply."}, func() *ui.Element {
 			return ui.TextArea(c, &a.llm.SystemPrompt).MinHeight(96).Label("System prompt")
 		})
 
-		// Temperature
-		input.FormField(c, "Temperature", input.FormFieldOptions{Description: "Sampling randomness; lower is more deterministic."}, func() *ui.Element {
-			return input.Slider(c, &a.llm.Temperature, input.SliderOptions{Min: 0, Max: 2, Step: 0.1, ShowValue: true, Label: "Temperature"}).Element
-		})
-
-		// Max tokens (seeded from the model default when the model changes).
-		a.seedMaxTokensField()
-		input.FormField(c, "Max tokens", input.FormFieldOptions{Description: "Upper bound on an assistant reply."}, func() *ui.Element {
-			return input.InputGroup(c, &a.maxTokField, input.InputGroupOptions{Label: "Max tokens"}).Input
-		})
-		a.syncMaxTokens()
-
-		// Streaming toggle
-		input.FormField(c, "Stream output", input.FormFieldOptions{Description: "Stream the reply live into the thread."}, func() *ui.Element {
-			return input.Switch(c, &a.llm.StreamOutput, "Stream output", input.SwitchOptions{})
-		})
+		// What the agent can do — fixed toolset, no toggles.
+		ui.Text(c, "Tools").FontSize(11).TextColor(k.TextMuted)
+		for _, t := range []struct{ name, desc string }{
+			{"bash", "Run shell commands in the workspace (build, test, git…)."},
+			{"read_file", "Read files from the workspace."},
+			{"write_file", "Create or overwrite workspace files (shown as review cards)."},
+		} {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.Must("terminal")).FontSize(13).TextColor(k.Accent)
+				ui.Column(c).Gap(1).Children(func() {
+					ui.Text(c, t.name).FontSize(12).Bold()
+					ui.Text(c, t.desc).FontSize(11).TextColor(k.TextMuted)
+				})
+			})
+		}
 
 		// Stop / status
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -569,37 +566,6 @@ var reasoningTiers = []input.SelectOption[string]{
 	{Value: "low", Label: "Low"},
 	{Value: "medium", Label: "Medium"},
 	{Value: "high", Label: "High"},
-}
-
-// seedMaxTokensField initializes the max-tokens field from the resolved
-// model's default the first time that model is seen, leaving user edits alone
-// thereafter.
-func (a *app) seedMaxTokensField() {
-	key := a.llm.Provider + "/" + a.llm.Model
-	if a.agentView.seededModel == key {
-		return
-	}
-	a.agentView.seededModel = key
-	if n := a.modelMaxTokens(); n >= 64 {
-		a.maxTokField = fmt.Sprintf("%d", n)
-	}
-}
-
-// modelMaxTokens returns the configured model's MaxTokens, or 0 if unknown.
-func (a *app) modelMaxTokens() int {
-	m, err := piai.GetModel(piai.KnownProvider(a.llm.Provider), a.llm.Model)
-	if err != nil {
-		return 0
-	}
-	return m.MaxTokens
-}
-
-func parseMaxTokens(s string) int {
-	n := 0
-	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &n); err != nil {
-		return -1
-	}
-	return n
 }
 
 // kTextMuted/kDanger/kSuccess resolve theme accents on the active token set.
