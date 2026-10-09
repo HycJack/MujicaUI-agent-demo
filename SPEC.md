@@ -37,11 +37,13 @@ Atlas 把一次编码会话摊开成三块：
 
 ### 1.2 非目标
 
-- 不做真实 git 操作（提交、暂存、拉取）。仓库数据是 mock 的。
+- git 走**真实命令**（status / diff / log / stage / unstage / commit / checkout），
+  但不做 push / pull / fetch 等远端操作，也不处理合并冲突；线程内的多文件
+  Diff 评审卡仍是演示数据。
 - LLM 配置持久化到用户配置目录（`settings.json`）；除此之外不做持久化，
   "Export / Import" 等为演示性提示。
-- 工作区树对真实文件系统**只读**（列目录 + 读文件预览）；Agent 工具能力沿用
-  pi-ai-go 的基础形态（对话 + 思维链），未接入文件系统/命令行沙箱工具。
+- 工作区树对真实文件系统**只读**（列目录 + 读文件预览 + 附加到对话）；Agent 工具
+  能力沿用 pi-ai-go 的基础形态（对话 + 思维链），未接入文件系统/命令行沙箱工具。
 
 ---
 
@@ -125,15 +127,16 @@ require (
 | 文件 | 职责 |
 | --- | --- |
 | `main.go` | 入口：`newApp()`、`loadSettings()`、窗口创建、`a.redraw = win.Update` 接线、心跳 goroutine、`App.Run()`。 |
-| `state.go` | 数据模型：`app` / `thread` / `row` / `repo` / `file` / `session` / `LLMSettings`，种子数据；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。 |
+| `state.go` | 数据模型：`app` / `thread` / `row`（含 `llmText`）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`，种子数据；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。 |
 | `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口）、会话栏、工作区、状态栏；快捷键；会话切换。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`、`actions`、`composer`（展示 `backendLabel`）。 |
-| `llm.go` | **pi-ai-go 集成层**：`resolveModel`（含 OpenAI 兼容端点直建模型）、`historyMessages`、`send`、`startStream`（goroutine 流式）、`streamOptions`、错误/中止处理。 |
+| `llm.go` | **pi-ai-go 集成层**：`resolveModel`（含 OpenAI 兼容端点直建模型）、`historyMessages`（用户行优先取 `llmText`）、`send`（附件文件内容折叠进消息）、`attachedFilesBlock`、`startStream`（goroutine 流式）、`streamOptions`、错误/中止处理。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs` + `settingsBody`（左侧源列表 `settingsNavItem` 切换分区）、`providersPane`（provider/model/Key/BaseURL，OpenAI 兼容端点、`fetchModels` 拉取模型、TreeSelect 选模型、Test connection）、`agentPane`（系统提示/推理/温度/限额）。 |
 | `config.go` | **配置持久化**：`settingsFile`/`loadSettings`/`saveSettings`，`settings.json` 读写与回退。 |
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
-| `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`readCapped` 文件预览（256 KiB 上限）、`previewLang` 高亮映射、`reloadWorkspace`。 |
-| `repo.go` | 右栏检视器：Workspace 标签（目录树 + 文件预览）与 Repository 标签（分支选择、变更列表、提交历史、Diff / 源码切换）。 |
+| `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`readCapped` 文件预览（256 KiB 上限）、`previewLang` 高亮映射、`attachFile` 附加到对话、`reloadWorkspace`。 |
+| `vcs.go` | **真实 git 后端**：`runGit`（15s 超时）、`parseStatus`/`parseBranches`/`parseLog`（porcelain 解析）、`collectVCS` 快照、`fileVersions`（HEAD / index / worktree 三方取版本，二进制探测）、`vcsAction`（stage/unstage）、`commitStaged`（含 amend）、`checkoutBranch`/`createBranch`、`loadSelectedDiff`。 |
+| `repo.go` | 右栏检视器：Workspace 标签（目录树 + 文件预览 + 附加按钮）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
 | `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`、`tokensT` 别名。 |
 | `commands.go` | ⌘K 命令面板与 `runCommand`（含 providers / agent / workspace / reload-workspace 命令）。 |
 | `main_test.go` | 测试：各视图渲染、发送、会话切换、命令面板、Provider 重绑、Agent 配置、Settings 模态框渲染。 |
@@ -233,6 +236,8 @@ type repo struct {
     commits  data.ListState[string]
     diff     git.DiffViewerState
     dst      code.CodeViewerState
+    msg      git.CommitMessage // 提交输入的标题/正文
+    vcs      vcsState          // 真实 git 状态（vcs.go，异步收集）
     branch   string
     showRepo bool
     codeTab  int // Repository 底部：0 = 工作区 Diff，1 = 文件源码
@@ -249,24 +254,29 @@ type repo struct {
 }
 ```
 
+`vcsState`（`vcs.go`）持有真实 git 的收集结果：`loaded/loading/err`、`flash`
+（一次性 toast）、`committing`（提交 Busy 锁）、`branch`/`branches`/`files`/`entries`
+（`entries` 与 `files` 平行，携带重命名旧路径等原始信息）/`commits`，以及选中变更的
+`diffKey`/`diffFrom`/`diffTo`/`diffWt`/`diffErr`/`diffLoading`。
+
 工作区树本身在 `workspace`（`workspace.go`）：`root`（`newApp()` 时取 `os.Getwd()`）、
 `nodes map[string]wsNode`（已列目录：子项/状态/错误；文件不注册）、
 `tree data.TreeState[string]`（展开/选中状态）。
 
-### 5.6 `file` —— 变更文件模型
+### 5.6 `vcsFile` —— 变更条目模型
 
 ```go
-type file struct {
-    path   string
-    status git.GitStatus
-    from   string // 旧文本（Diff 的 from）
-    to     string // 新文本（Diff 的 to / 源码视图）
-    lang   string // 语法高亮语言：shell / go / markdown
+type vcsFile struct {
+    path    string
+    oldPath string // 重命名时的旧路径（diff 取 HEAD:oldPath）
+    status  git.GitStatus
+    staged  bool
 }
 ```
 
-`demoFiles()` 返回 3 个变更文件；`changedFiles()` 投影为 `[]git.ChangedFile`
-（第 0 个置为 staged），索引与 `demoFiles()` 对齐，因此变更列表的选中项能直接定位 Diff/源码。
+`parseStatus` 把 `git status --porcelain=v1 -b` 解析成 `[]git.ChangedFile` +
+平行的 `[]vcsFile`：一个文件可同时出现暂存与未暂存两条（`MM`）；`R`/`C` 取
+`old -> new` 的新路径展示。`vcsFile.changed()` 投影回组件模型。
 
 ### 5.7 `session` 与种子
 
@@ -493,8 +503,16 @@ Column(Fill)
    - `.Changed()`（单击选中）→ `selectWsNode(path, false)`；`.Submitted()`（Enter/双击）→
      `selectWsNode(path, true)`。文件 → `openWsPreview`；目录仅在 submitted 时翻转展开。
 3. **预览区**（`wsPreview`）：未选中时显示提示文案；选中后为标题行（`file-code` 图标 +
-   路径 + 超过 256 KiB 显示 `truncated`）+ `ui.Box(Height 220, Clip)` 内的
+   路径 + 超过 256 KiB 显示 `truncated` + `plus` 附加按钮）+ `ui.Box(Height 220, Clip)` 内的
    `code.CodeViewer`（加载中/错误分别显示占位与 `⚠` 错误行）。
+
+**附加到对话（`attachFile`）**：把文件加入 composer 的 `chat.ContextChips`
+（`thread.ctx`，`ContextItem{ID:"file:<相对路径>", Kind:ContextFile}`）。入口有三处：
+预览区标题行的 `plus` 按钮、Repository 底部面板的 `plus` 按钮、ChangesList 上的
+双击/Enter（`Submitted()`）。重复附加去重（toast "Already attached"），上限 8 个。
+`send()` 时把附件内容折叠进消息：可见行只追加 `Attached: \`a\`, \`b\``，LLM 消息
+（`row.llmText`，`historyMessages` 优先取用）携带 `--- 路径 ---` + 内容
+（单文件 64 KiB 上限，读取失败写明原因），发送后清空 chips。
 
 **目录列举规则（`listDir`）**：跳过 `.git`、`.gocache`、`.gopath`、`.mygo`、`node_modules`、
 `__pycache__`、`.venv`、`venv`、`dist`、`build`、`target`、`.DS_Store`、`desktop.ini`；
@@ -505,32 +523,52 @@ Column(Fill)
 `previewErr`。`previewLang` 按扩展名映射高亮语言（`.go`→go、`.sh/.bash`→shell、
 `.js/.ts`→javascript/typescript、`.py`、`.json`、`.sql`），其余纯文本（高亮器对未知语言安全回退）。
 
-### 9.2 Repository 标签（mock 版本控制）
+### 9.2 Repository 标签（真实 git）
 
-1. **头部**：`git-branch` 图标 + "Repository" 标题。
-2. **分支选择**：`git.BranchSelector(&branch, branchList(), {AllowCreate:true})`。
-   - `.Changed()` → toast “Switched to …”。
-   - `.Created()` → toast “Created branch …”。
-3. **Changes**：`git.ChangesList(&changes, changedFiles(), {})`，高 96。
-4. **History**：`git.CommitList(&commits, commitList(), {})`，高 96。
-5. **底部面板**：
-   - 选中文件标题行：`git.GitStatusBadge(status)` + 路径。
+数据来自 `vcs.go`：`collectVCS(root)` 用三条 git 命令收集快照——
+`git status --porcelain=v1 -b`（当前分支 + ahead/behind + 变更）、
+`git branch --all --format=…`（本地/远端分支、上游、ahead/behind）、
+`git log --max-count=30 --pretty=format:…\x1f…\x1e`（哈希/父/作者/时间/主题/Refs）。
+首次显示该标签时自动收集，此后由刷新按钮或任何写操作后重新收集；
+非 git 目录显示 `⚠` 错误与提示，面板仍可渲染。
+
+1. **头部**：`git-branch` 图标 + "Repository" 标题 + `refresh-cw` 刷新按钮（`refreshVCS`）。
+2. **分支选择**：`git.BranchSelector(&branch, vcs.branches, {AllowCreate:true})`。
+   - `.Changed()` → `checkoutBranch`（`git checkout <name>`）。
+   - `.Created()` → `createBranch`（`git checkout -b <name>`）。
+3. **Changes**：`git.ChangesList(&changes, vcs.files, {})`，高 96，暂存/未暂存分组：
+   - `.Action()` → `vcsAction`：`stage`→`git add -- <path>`、`unstage`→
+     `git restore --staged -- <path>`、`stage_all`→`git add -A`、
+     `unstage_all`→`git restore --staged .`；
+   - `.Submitted()`（双击/Enter）→ 附加该文件到对话。
+4. **History**：`git.CommitList(&commits, vcs.commits, {})`，高 72。
+5. **提交输入**：`git.CommitInput(&msg, {Busy: vcs.committing})` —— `.Committed()` →
+   `commitStaged(false)`（`git commit -m 标题 -m 正文`，无暂存时 toast 提示）；
+   `.Amended()` → `commitStaged(true)`（有标题带 `-m` 重写，无标题 `--amend --no-edit`）。
+   提交期间 Busy 锁输入，成功后清空消息并刷新。
+6. **底部面板**（选中变更的 Diff / 源码）：
+   - 标题行：`git.GitStatusBadge(status)` + 路径 + `plus` 附加按钮。
    - `ui.Segmented(&codeTab, "Diff", "Source")`（宽 160）。
-   - `ui.Box(Grow 1, MinHeight 140, Clip)` 内：
-     - `codeTab==1` → `code.CodeViewer(splitLines(f.to), &dst, {Language:f.lang, Label:f.path})`。
-     - 否则 → `git.DiffViewer(&diff, f.from, f.to, {Language:f.lang})`。
+   - `ui.Box(Grow 1, MinHeight 100, Clip)` 内，加载中/错误有占位：
+     - `codeTab==1` → `code.CodeViewer(splitLines(diffWt), &dst, …)`（工作区内容）。
+     - 否则 → `git.DiffViewer(&diff, diffFrom, diffTo, …)`。
 
-选中项取 `a.repo.changes.Selected()`，越界回退到 0，保证面板不空。
+**版本读取（`fileVersions`）**：Diff 需要新旧两个版本，按条目状态取——
+未跟踪：空 vs 工作区；暂存新增：空 vs `git show :path`（index）；暂存修改：
+`HEAD:path` vs `:path`；暂存重命名：`HEAD:oldPath` vs `:path`；暂存删除：
+`HEAD:path` vs 空；未暂存删除：`:path` vs 空；未暂存修改：`:path` vs 工作区。
+内容含 NUL 字节时显示 "(binary file, not shown)"，超长截断。
+选中项变化由 `diffKey`（staged 标志 + 路径）识别，异步加载期间选择再变会触发重载。
+
+所有 git 写操作经 `gitThen`：有窗口时 goroutine 执行、`a.redraw` 回 UI 线程后
+flash toast（成功文案或错误首行）并重新收集；无窗口（测试）同步执行。
 
 `splitLines` 去掉末尾换行后按 `\n` 切分，供源码视图使用。
 
-### 9.3 mock 数据
+### 9.3 演示数据边界
 
-- `branchList()`：`main`(current, 上游 origin/main, Ahead 1)、`fix/export-quota`、
-  `origin/main`、`origin/release`。
-- `commitList()`：3 条提交，含 Refs/作者/时间。
-- `demoFiles()`：`jobs/export-nightly.sh`、`jobs/quota.go`、`docs/runbook.md`。
-- `filesChanged`（`thread.go`）：供线程内 `MultiFileDiffReview` 使用的变更集。
+`thread.go` 的 `filesChanged`（线程内 `MultiFileDiffReview` 卡）仍是演示数据；
+右栏 Repository 标签已全部接真实 git。
 
 ---
 
@@ -588,8 +626,11 @@ Column(Fill)
 - [ ] ⌘B / ⌘J 折叠左栏 / 右栏；标题栏两个按钮同效。
 - [ ] ⌘K 打开面板；9 条命令各自生效。
 - [ ] Workspace 标签：树列出真实目录（目录在前、噪音目录跳过）；展开子目录懒加载；
-  点文件在下方预览源码；刷新按钮重载；状态栏显示工作区名。
-- [ ] Repository 标签：切分支有 toast；Changes 选中项驱动底部面板；Diff/Source 分段切换渲染。
+  点文件在下方预览源码；`plus` 按钮把文件附加到对话（composer 出现 chip，发送后
+  内容进入 LLM 消息）；刷新按钮重载；状态栏显示工作区名。
+- [ ] Repository 标签（真实 git）：列出真实分支/变更/历史；行内按钮 stage/unstage、
+  组按钮全部暂存/取消；选中变更驱动 Diff（暂存= HEAD vs index，未暂存= index vs 工作区）；
+  提交输入写标题后 Commit 真实提交；切分支/建分支生效；刷新按钮重收状态。
 - [ ] 助理消息：复制写入剪贴板；重新生成有反馈。
 - [ ] 终端运行卡在 `rowCommand` 形态下可中止。
 
@@ -607,7 +648,7 @@ Column(Fill)
 | 输入区 | `chat.PromptComposer`、`chat.SendButton`、`chat.ModeSelector`、`chat.ModelSelector`、`chat.ContextChips`、`chat.TokenCounter` |
 | 欢迎 | `chat.WelcomeScreen`、`chat.SuggestionChips`、`chat.CapabilityCard` |
 | Agent 卡 | `agent.ToolCallCard`、`agent.FileChangeCard`、`agent.CommandExecutionCard`、`agent.MultiFileDiffReview` |
-| 仓库 | `git.BranchSelector`、`git.ChangesList`、`git.CommitList`、`git.DiffViewer`、`git.GitStatusBadge` |
+| 仓库 | `git.BranchSelector`、`git.ChangesList`、`git.CommitInput`、`git.CommitList`、`git.DiffViewer`、`git.GitStatusBadge` |
 | 工作区树 | `data.Tree`（懒加载：`Children`/`ItemStatus`/`Load`） |
 | 代码 | `code.CodeViewer` |
 | 命令面板 | `navigation.CommandPalette` |
@@ -642,7 +683,14 @@ Column(Fill)
    懒加载状态机（Unloaded→Loading→Ready/Failed）、文件是叶子；预览读取/语言映射/
    256 KiB 截断/缺失文件错误；`NewTester` 打开根目录 → 树列出文件 → 点击行加载预览；
    workspace / reload-workspace 命令。
-8. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
+8. **`TestParseStatus` / `TestParseBranchesAndLog` / `TestVCSRealRepo` /
+   `TestRepositoryPaneAttach`**（`vcs_test.go`）—— porcelain 解析（分支头、
+   `MM` 双条、重命名、删除）；用真实 git 命令在临时目录建仓库后跑完整版本管理闭环：
+   未跟踪 → stage → 提交 → 再修改 → 建分支/切分支，断言每步的文件/版本/历史；
+   `NewTester` 渲染 Repository 标签并点击附加按钮。
+9. **`TestAttachFile`**（`vcs_test.go`）—— 附加去重、发送后 chips 清空、可见行带
+   `Attached:` 注记、`llmText` 携带文件内容。
+10. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
    且两条关闭路径都写出 `settings.json`（`configPath` 指向临时目录，不碰真实配置）。
 
 ---
@@ -656,16 +704,19 @@ Column(Fill)
 - 配置持久化到用户配置目录 `MujicaUI-agent-demo/settings.json`（含 API Key 明文，
   文件 0600 / 目录 0700）；API Key 也可留空走 Provider 的环境变量。
 - 无窗口（测试）环境 `send()` 落定占位文本，不做真实网络调用。
-- git 操作只读且为 mock；分支/提交数据不随选择改变源。
-- 工作区树对真实文件系统**只读**：根固定为启动目录（`os.Getwd()`，无目录选择器），
-  忽略列表固定，预览上限 256 KiB（更大文件截断显示）。
+- git 走真实命令，但只覆盖本地操作（status/diff/log/add/restore/commit/checkout）：
+  无 push / pull / fetch，不做合并冲突处理；`git restore --staged` 需要 git ≥ 2.23。
+- 附件折叠进 LLM 消息时单文件上限 64 KiB（超出截断并注明）；预览上限 256 KiB；
+  二进制文件显示占位文案。
+- 工作区树根固定为启动目录（`os.Getwd()`，无目录选择器），忽略列表固定。
 - `StatusBar` 的上下文用量、变更数为固定文案。
 - 「Export / Import」为演示提示，无实际 IO。
 
 **可扩展方向**
 
+- git 补齐远端操作（push / pull / fetch，`git.GitListResult.Action` 的 discard），
+  处理合并冲突与 detached HEAD。
 - 工作区根目录选择器（切换/新增工作区）、树内文件过滤搜索、预览文件写回保存。
-- 变更列表接入 stage/unstage 动作（`git.ChangesList` + `git.GitListResult.Action`）。
 - 在仓库面板加入 `code.ProblemsPanel` / `code.OutputPanel` / `code.Terminal`。
 - 借助 `core.Settings{Light/Dark}` 做运行时亮暗切换按钮。
 - 用 `chat.ConversationSearch` 给会话栏加搜索，`chat.ConversationItem` 支持重命名/置顶/删除。

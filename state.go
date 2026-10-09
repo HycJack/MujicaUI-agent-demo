@@ -35,6 +35,7 @@ type row struct {
 	role      chat.MessageRole
 	kind      kind
 	text      string
+	llmText   string // what the LLM sees when it differs from text (attached file contents)
 	thinkText string // reasoning text collected while a reply streams
 	at        time.Time
 }
@@ -112,14 +113,16 @@ func seededFor(id string) thread {
 	}
 }
 
-// repo is the git state the right-hand pane inspects, plus the workspace
-// file preview the tree drives.
+// repo is the right-hand inspector's state: the real git backend (vcs),
+// the workspace file preview the tree drives, and the component states.
 type repo struct {
 	changes  git.ChangesListState
 	branches data.ListState[string]
 	commits  data.ListState[string]
 	diff     git.DiffViewerState
 	dst      code.CodeViewerState
+	msg      git.CommitMessage // commit input's title/body
+	vcs      vcsState          // real git state, collected off the UI thread
 	branch   string
 	showRepo bool
 	codeTab  int // inspector bottom pane: 0 working diff, 1 file source
@@ -133,15 +136,6 @@ type repo struct {
 	previewErr       string
 	previewLoading   bool
 	previewTruncated bool
-}
-
-// file describes a changed file plus the new text shown in the code view.
-type file struct {
-	path   string
-	status git.GitStatus
-	from   string // old text for the diff
-	to     string // new text
-	lang   string
 }
 
 // LLMSettings carries the pi-ai-go backend configuration the provider and

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
 )
 
@@ -27,6 +28,9 @@ var wsIgnore = map[string]bool{
 
 // wsReadCap caps a previewed file's size; larger files load truncated.
 const wsReadCap = 256 << 10 // 256 KiB
+
+// wsAttachCap caps one attached file's content folded into a message.
+const wsAttachCap = 64 << 10 // 64 KiB
 
 // wsEntry is one child of a listed directory.
 type wsEntry struct {
@@ -214,6 +218,30 @@ func (a *app) applyWsPreview(text string, truncated bool, err error) {
 		return
 	}
 	a.repo.previewText, a.repo.previewTruncated = text, truncated
+}
+
+// attachFile adds a workspace file to the composer's context chips and
+// returns the toast to show. Paths may be absolute (tree/preview) or
+// repository-relative (changes list); ids are slash-separated relative
+// paths so the same file is only attached once.
+func (a *app) attachFile(path string) string {
+	rel := relToRoot(a.ws.root, path)
+	id := "file:" + rel
+	for _, it := range a.thread.ctx {
+		if it.ID == id {
+			return "Already attached " + rel
+		}
+	}
+	if len(a.thread.ctx) >= 8 {
+		return "Attachment limit reached"
+	}
+	a.thread.ctx = append(a.thread.ctx, chat.ContextItem{
+		ID:     id,
+		Label:  filepath.Base(rel),
+		Detail: rel,
+		Kind:   chat.ContextFile,
+	})
+	return "Attached " + rel
 }
 
 // reloadWorkspace drops the listings and the preview so the pane re-reads

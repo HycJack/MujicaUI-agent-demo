@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -92,21 +93,27 @@ func (a *app) thinkOptions() []string {
 
 // historyMessages converts the thread's user/assistant text rows into pi-ai
 // messages, skipping tool/demo/decorative rows so the LLM sees clean history.
+// A user row's llmText (draft + attached file contents) wins over its
+// displayed text when set.
 func (a *app) historyMessages() []piai.Message {
 	msgs := make([]piai.Message, 0, len(a.thread.rows))
 	for i := range a.thread.rows {
 		r := &a.thread.rows[i]
-		if r.text == "" {
+		text := r.text
+		if r.llmText != "" {
+			text = r.llmText
+		}
+		if text == "" {
 			continue
 		}
 		switch r.role {
 		case chat.MessageUser:
-			msgs = append(msgs, piai.UserMessage{Content: r.text, Timestamp: r.at})
+			msgs = append(msgs, piai.UserMessage{Content: text, Timestamp: r.at})
 		case chat.MessageAssistant:
 			switch r.kind {
 			case rowPlain, rowReasoned:
 				msgs = append(msgs, piai.AssistantMessage{
-					Content:   []piai.ContentBlock{piai.TextContent{Type: "text", Text: r.text}},
+					Content:   []piai.ContentBlock{piai.TextContent{Type: "text", Text: text}},
 					Timestamp: r.at,
 				})
 			}
@@ -125,14 +132,50 @@ func (a *app) send() {
 		return
 	}
 	now := time.Now()
+	// Fold attached workspace files into the outgoing message: the visible
+	// row lists their names, the LLM message carries their contents.
+	llmText := text
+	if names, block := a.attachedFilesBlock(); names != "" {
+		llmText = text + "\n\n[Attached files]" + block
+		text = text + "\n\nAttached: " + names
+		a.thread.ctx = nil
+	}
 	userIdx := len(a.thread.rows)
 	a.thread.rows = append(a.thread.rows,
-		row{id: fmt.Sprintf("u%d", userIdx), role: chat.MessageUser, text: text, at: now})
+		row{id: fmt.Sprintf("u%d", userIdx), role: chat.MessageUser, text: text, llmText: llmText, at: now})
 	a.thread.rows = append(a.thread.rows,
 		row{id: fmt.Sprintf("a%d", userIdx+1), role: chat.MessageAssistant, kind: rowReasoned, at: now.Add(time.Millisecond)})
 	a.thread.draft = ""
 	a.thread.list.ScrollToEnd()
 	a.startStream(userIdx)
+}
+
+// attachedFilesBlock renders the thread's attached file chips as a prompt
+// block: a comma list for the visible row and fenced contents for the LLM.
+func (a *app) attachedFilesBlock() (names, block string) {
+	var list []string
+	var sb strings.Builder
+	for _, it := range a.thread.ctx {
+		if it.Kind != chat.ContextFile || !strings.HasPrefix(it.ID, "file:") {
+			continue
+		}
+		rel := strings.TrimPrefix(it.ID, "file:")
+		list = append(list, "`"+rel+"`")
+		content, truncated, err := readCapped(filepath.Join(a.ws.root, filepath.FromSlash(rel)), wsAttachCap)
+		sb.WriteString("\n\n--- " + rel + " ---\n")
+		switch {
+		case err != nil:
+			sb.WriteString("(could not read: " + err.Error() + ")")
+		case truncated:
+			sb.WriteString(content + "\n… (truncated)")
+		default:
+			sb.WriteString(content)
+		}
+	}
+	if len(list) == 0 {
+		return "", ""
+	}
+	return strings.Join(list, ", "), sb.String()
 }
 
 // startStream launches the pi-ai streaming request for the already-appended

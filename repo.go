@@ -1,12 +1,11 @@
 package main
 
-// repo.go is the Atlas repo inspector: the branch list, the working
-// tree's changes, the commit log, and the diff of whichever file is
-// chosen — the version-control side of a Codex-style assistant.
+// repo.go is the Atlas right-hand inspector: the Workspace tab browses the
+// real directory tree, and the Repository tab manages the workspace's real
+// git repository — branch, staged/unstaged changes, commit, history, diff.
 
 import (
 	"strings"
-	"time"
 
 	"github.com/ZacharyZhang-NY/MujicaUI/code"
 	"github.com/ZacharyZhang-NY/MujicaUI/data"
@@ -14,52 +13,6 @@ import (
 	"github.com/ZacharyZhang-NY/MujicaUI/icons"
 	"github.com/egoist/mygo/ui"
 )
-
-// demoFiles is the working tree the inspector browses; index aligns with
-// the changes list so a chosen row shows its diff.
-func demoFiles() []file {
-	return []file{
-		{path: "jobs/export-nightly.sh", status: git.GitModified, lang: "shell",
-			from: "#!/usr/bin/env bash\nbuild dump\nupload dump\n",
-			to:   "#!/usr/bin/env bash\nbuild dump\nprune yesterday\nupload dump\n"},
-		{path: "jobs/quota.go", status: git.GitModified, lang: "go",
-			from: "package jobs\n\n// cap keeps a week of dumps.\nvar cap = 7\n",
-			to:   "package jobs\n\n// cap keeps a week of dumps.\nvar cap = 14\n"},
-		{path: "docs/runbook.md", status: git.GitAdded, lang: "markdown",
-			from: "",
-			to:   "# Export runbook\n\nThe archive bucket keeps a week of dumps; raise the cap before it jams.\n"},
-	}
-}
-
-// changedFiles projects demoFiles into the changes list model.
-func changedFiles() []git.ChangedFile {
-	files := demoFiles()
-	out := make([]git.ChangedFile, 0, len(files))
-	for i, f := range files {
-		out = append(out, git.ChangedFile{Path: f.path, Status: f.status, Staged: i == 0})
-	}
-	return out
-}
-
-// branchList is the demo branch set.
-func branchList() []git.Branch {
-	return []git.Branch{
-		{Name: "main", Current: true, Upstream: "origin/main", Ahead: 1},
-		{Name: "fix/export-quota", Ahead: 2, Behind: 1},
-		{Name: "origin/main", Remote: true},
-		{Name: "origin/release", Remote: true},
-	}
-}
-
-// commitList is the demo history, newest first.
-func commitList() []git.Commit {
-	now := time.Now()
-	return []git.Commit{
-		{Hash: "a1b2c3d", Author: "Ada Lovelace", When: now.Add(-2 * time.Hour), Subject: "Raise the archive bucket cap", Refs: []string{"main"}},
-		{Hash: "9f8e7d6", Author: "Ada Lovelace", When: now.Add(-26 * time.Hour), Subject: "Prune yesterday's dump before upload"},
-		{Hash: "4c5d6e7", Author: "Grace Hopper", When: now.Add(-3 * 24 * time.Hour), Subject: "Add the nightly export job"},
-	}
-}
 
 // repoPane is the right-hand inspector, shown when repo.showRepo is set:
 // a Workspace tab browsing the real directory tree, and a Repository tab
@@ -118,6 +71,7 @@ func (a *app) wsPreview(c *ui.Context, k tokensT) {
 		if a.repo.previewTruncated {
 			ui.Text(c, "truncated").FontSize(10).TextColor(k.TextMuted)
 		}
+		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(a.repo.previewPath)) })
 	})
 	ui.Box(c).Height(220).Shrink(0).Clip().Children(func() {
 		switch {
@@ -132,52 +86,112 @@ func (a *app) wsPreview(c *ui.Context, k tokensT) {
 	})
 }
 
-// repositoryPane is the Repository tab: the branch list, the working
-// tree's changes, the commit log, and the diff of whichever file is
-// chosen — the version-control side of a Codex-style assistant.
+// repositoryPane is the Repository tab: the workspace repository's real
+// git state — branch, staged/unstaged changes, commit input, history, and
+// the selected file's diff or source.
 func (a *app) repositoryPane(c *ui.Context, k tokensT) {
-	// Header: title and a branch selector that actually switches branch.
+	v := &a.repo.vcs
+	if !v.loaded && !v.loading {
+		a.loadVCS()
+	}
+	if v.flash != "" {
+		c.Toast(v.flash)
+		v.flash = ""
+	}
+	// Header: title and a refresh button.
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, icons.Must("git-branch")).FontSize(14).TextColor(k.TextMuted)
 		ui.Text(c, "Repository").FontSize(13).Bold().Grow(1)
+		a.iconToggle(c, k, "refresh-cw", "Refresh repository", a.refreshVCS)
 	})
-	sel := git.BranchSelector(c, &a.repo.branch, branchList(), git.BranchSelectorOptions{AllowCreate: true})
+	if v.err != "" {
+		ui.Column(c).Gap(4).Children(func() {
+			ui.Text(c, "⚠ "+v.err).FontSize(12).TextColor(kDanger(c))
+			ui.Text(c, "Atlas manages the git repository at the workspace root.").FontSize(11).TextColor(kTextMuted(c))
+		})
+		return
+	}
+
+	// Branch selector that actually checks out.
+	branches := v.branches
+	if len(branches) == 0 && v.branch != "" {
+		branches = []git.Branch{{Name: v.branch, Current: true}}
+	}
+	sel := git.BranchSelector(c, &a.repo.branch, branches, git.BranchSelectorOptions{AllowCreate: true})
 	if sel.Changed() {
-		c.Toast("Switched to " + a.repo.branch)
+		a.checkoutBranch(a.repo.branch)
 	}
 	if name, ok := sel.Created(); ok {
-		c.Toast("Created branch " + name)
+		a.createBranch(name)
 	}
 
 	ui.Text(c, "Changes").FontSize(11).TextColor(k.TextMuted)
-	cl := git.ChangesList(c, &a.repo.changes, changedFiles(), git.ChangesListOptions{})
+	cl := git.ChangesList(c, &a.repo.changes, v.files, git.ChangesListOptions{})
 	cl.Element.Height(96)
+	if action, path, ok := cl.Action(); ok {
+		a.vcsAction(action, path)
+	}
+	if cl.Submitted() {
+		if f, ok := a.selectedChange(); ok {
+			c.Toast(a.attachFile(f.Path))
+		}
+	}
 
 	ui.Text(c, "History").FontSize(11).TextColor(k.TextMuted)
-	history := git.CommitList(c, &a.repo.commits, commitList(), git.CommitListOptions{})
-	history.Element.Height(96)
+	history := git.CommitList(c, &a.repo.commits, v.commits, git.CommitListOptions{})
+	history.Element.Height(72)
 
-	// Bottom pane: the chosen file's diff, or its source, toggled.
-	files := demoFiles()
-	i := a.repo.changes.Selected()
-	if i < 0 || i >= len(files) {
-		i = 0
+	// Commit box: title + body, locked with Busy while git runs.
+	ci := git.CommitInput(c, &a.repo.msg, git.CommitInputOptions{Busy: v.committing})
+	if ci.Committed() {
+		a.commitStaged(false)
 	}
-	f := files[i]
+	if ci.Amended() {
+		a.commitStaged(true)
+	}
+
+	// Bottom pane: the selected change's diff or source.
+	a.loadSelectedDiff()
+	f, ok := a.selectedChange()
+	if !ok {
+		ui.Text(c, "Working tree clean — nothing to review").FontSize(11).TextColor(kTextMuted(c))
+		return
+	}
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		git.GitStatusBadge(c, f.status, git.GitStatusBadgeOptions{})
-		ui.Text(c, f.path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		git.GitStatusBadge(c, f.Status, git.GitStatusBadgeOptions{})
+		ui.Text(c, f.Path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(f.Path)) })
 	})
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
 	})
-	ui.Box(c).Grow(1).MinHeight(140).Clip().Children(func() {
-		if a.repo.codeTab == 1 {
-			code.CodeViewer(c, splitLines(f.to), &a.repo.dst, code.CodeViewerOptions{Language: f.lang, Label: f.path})
-		} else {
-			git.DiffViewer(c, &a.repo.diff, f.from, f.to, git.DiffViewerOptions{Language: f.lang}).Fill()
+	lang := previewLang(f.Path)
+	ui.Box(c).Grow(1).MinHeight(100).Clip().Children(func() {
+		switch {
+		case v.diffLoading:
+			ui.Text(c, "Loading versions…").FontSize(12).TextColor(kTextMuted(c))
+		case v.diffErr != "":
+			ui.Text(c, "⚠ "+v.diffErr).FontSize(12).TextColor(kDanger(c))
+		case a.repo.codeTab == 1:
+			code.CodeViewer(c, splitLines(v.diffWt), &a.repo.dst, code.CodeViewerOptions{Language: lang, Label: f.Path})
+		default:
+			git.DiffViewer(c, &a.repo.diff, v.diffFrom, v.diffTo, git.DiffViewerOptions{Language: lang}).Fill()
 		}
 	})
+}
+
+// selectedChange returns the changes list's selected file, clamped to the
+// first one when nothing (or an out-of-range row) is selected.
+func (a *app) selectedChange() (git.ChangedFile, bool) {
+	v := &a.repo.vcs
+	if len(v.files) == 0 {
+		return git.ChangedFile{}, false
+	}
+	i := a.repo.changes.Selected()
+	if i < 0 || i >= len(v.files) {
+		i = 0
+	}
+	return v.files[i], true
 }
 
 // splitLines breaks text into lines for the code viewer.

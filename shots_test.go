@@ -60,12 +60,21 @@ func TestScreenshots(t *testing.T) {
 	w.newThread()
 	shot("chat-welcome", w)
 
+	// The Repository shots browse a real throwaway repository with staged,
+	// unstaged and untracked changes.
+	demo := seedVCSDemo(t)
 	d := newApp()
+	d.ws = newWorkspace(demo)
 	d.runCommand("diff")
+	d.loadVCS() // headless: synchronous
+	d.loadSelectedDiff()
 	shot("repo-diff", d)
 
 	s := newApp()
+	s.ws = newWorkspace(demo)
 	s.runCommand("source")
+	s.loadVCS()
+	s.loadSelectedDiff()
 	shot("repo-source", s)
 
 	p := newApp()
