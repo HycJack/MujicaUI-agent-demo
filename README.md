@@ -19,10 +19,12 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
 | --- | --- |
 | ![Conversation 对话线程](screenshots/chat-conversation.png) | ![Welcome 欢迎页](screenshots/chat-welcome.png) |
 | *对话线程：思考块、工具调用与文件变更卡* | *新会话欢迎页：能力卡与 starter 提示* |
-| ![Workspace tree 工作区目录树](screenshots/workspace-tree.png) | ![Repo diff 工作区 Diff](screenshots/repo-diff.png) |
-| *Workspace 标签：真实目录树 + 文件预览* | *Repository 标签：真实 git 的暂存/未暂存 Diff* |
+| ![Workspace tree 工作区目录树](screenshots/workspace-tree.png) | ![File drawer 代码抽屉](screenshots/file-drawer.png) |
+| *Workspace 标签：真实目录树* | *代码抽屉：大尺寸查看 + Raw/Fmt 格式化* |
+| ![Repo diff 真实 git Diff](screenshots/repo-diff.png) | ![Repo source 文件源码](screenshots/repo-source.png) |
+| *Repository 标签：真实 git 的暂存/未暂存 Diff* | *Repository 标签：工作区文件源码* |
 | ![Providers 后端配置](screenshots/settings-providers.png) | ![Agent settings Agent 配置](screenshots/settings-agent.png) |
-| *Settings：Provider / 模型 / Key / Base URL* | *Settings：系统提示 / 推理 / 采样* |
+| *Settings：Provider / 模型 / Key / Base URL / Reasoning 分档* | *Settings：系统提示 / 采样* |
 | ![Command palette 命令面板](screenshots/command-palette.png) | |
 | *⌘K 命令面板* | |
 
@@ -34,14 +36,15 @@ JavaScript；对话由 [pi-ai-go](https://github.com/HycJack/pi-ai-go) 驱动真
   全部由 MyGo 弹性布局原语拼装，标题栏与状态栏齐备。
 - **真实 LLM 流式对话** —— pi-ai-go 统一多模型 SDK：流式正文、思维链、工具调用卡、
   多文件 Diff 评审；无窗口（测试）环境下同步落定占位回复，保持确定性。
-- **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录），可随时
-  切换到任意目录：右栏 Workspace 标签浏览真实目录（懒加载展开、目录优先排序、
-  跳过 `.git` / `node_modules` 等噪音）；点选文件在下方大尺寸预览（340 高，
-  按扩展名语法高亮），`.go` / `.json` 支持 **Raw/Fmt 格式化视图**（gofmt /
-  美化 JSON，只影响显示不写盘），一键附加到对话或刷新；状态栏显示工作区名。
-- **会话按工作区组织** —— 侧栏顶部显示当前工作区并可一键打开切换对话框
-  （最近目录 + 手输路径，⌘K `Open workspace…`）；每个工作区有独立的会话列表，
-  切换工作区即切换会话上下文，树 / git 面板随之重根。
+- **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录）；右栏
+  Workspace 标签浏览真实目录（懒加载展开、目录优先排序、跳过 `.git` /
+  `node_modules` 等噪音）；**点击文件滑出右侧大抽屉**（720 宽、内容填满）查看
+  源码：按扩展名语法高亮，`.go` / `.json` 支持 **Raw/Fmt 格式化视图**（gofmt /
+  美化 JSON，只影响显示不写盘），可一键附加到对话。
+- **会话按工作区组织，侧栏以工作区列表为主体** —— 侧栏大部分高度是工作区列表
+  （当前根高亮在首行、最近目录在下、末行 "Open workspace…" 手输入口，`plus`
+  打开路径对话框）；点行即切换，树 / git 面板 / 会话上下文随之重根；当前工作区
+  的会话停靠在列表下方（New chat + 会话列表）。
 - **数据持久化** —— 用户配置目录下三个 JSON：`settings.json`（LLM 配置，含
   API Key）、`workspace.json`（当前工作区 + 最近列表）、`sessions.json`
   （**所有工作区的会话与完整对话记录**），重启后原样恢复。
@@ -106,7 +109,8 @@ MYGO_UI_SHOTS=screenshots go test . -run TestScreenshots
 | `llm.go` | pi-ai-go 集成：模型解析、流式发送、中止与错误处理 |
 | `settings.go` | Settings 模态框：Providers / Agent 两个分区 |
 | `config.go` | 配置持久化：`settings.json` 的加载与保存 |
-| `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 文件预览 + 附加到对话 |
+| `workspace.go` | 工作区：真实目录树（懒加载、忽略规则）+ 附加到对话 |
+| `drawer.go` | 代码抽屉：右侧 720 宽大尺寸查看器（文件内容 / Diff / 源码，Raw/Fmt 格式化） |
 | `wsstore.go` | 工作区存储：默认主目录、目录切换对话框、`workspace.json` / `sessions.json` 持久化 |
 | `vcs.go` | 真实 git 后端：status / branch / log 解析、stage / unstage / commit / checkout |
 | `repo.go` | 右栏检视器：Workspace 树 / Repository（真实分支、变更、提交、Diff / 源码） |

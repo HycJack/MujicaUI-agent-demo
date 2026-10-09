@@ -51,13 +51,14 @@ func TestScreenshots(t *testing.T) {
 	wk.runCommand("workspace")
 	wk.ws.tree.SetOpen(wk.ws.root, true)
 	wk.loadWsDir(wk.ws.root) // headless: lists synchronously
+	shot("workspace-tree", wk)
 	for _, e := range wk.wsChildren(wk.ws.root) {
 		if filepath.Base(e) == "main.go" || strings.HasSuffix(e, ".go") {
-			wk.openWsPreview(e)
+			wk.openFileDrawer(e)
 			break
 		}
 	}
-	shot("workspace-tree", wk)
+	shot("file-drawer", wk)
 
 	w := newApp()
 	w.newThread()

@@ -100,15 +100,15 @@ func TestWorkspacePreview(t *testing.T) {
 	}
 	a := newApp()
 	a.ws = newWorkspace(root)
-	a.openWsPreview(notes)
-	if a.repo.previewPath != notes || a.repo.previewText != "# hello workspace" {
-		t.Fatalf("preview = %q %q", a.repo.previewPath, a.repo.previewText)
+	a.openFileDrawer(notes)
+	if !a.fdraw.open || a.fdraw.title != "notes.md" || a.fdraw.text != "# hello workspace" {
+		t.Fatalf("drawer = open=%v %q %q", a.fdraw.open, a.fdraw.title, a.fdraw.text)
 	}
-	if a.repo.previewLang != "" {
-		t.Fatalf("markdown maps to %q, want plain", a.repo.previewLang)
+	if a.fdraw.lang != "" {
+		t.Fatalf("markdown maps to %q, want plain", a.fdraw.lang)
 	}
-	if a.repo.previewTruncated || a.repo.previewErr != "" {
-		t.Fatalf("unexpected flags: trunc=%v err=%q", a.repo.previewTruncated, a.repo.previewErr)
+	if a.fdraw.truncated || a.fdraw.err != "" {
+		t.Fatalf("unexpected flags: trunc=%v err=%q", a.fdraw.truncated, a.fdraw.err)
 	}
 
 	// A Go file maps its language; a huge file truncates at the cap.
@@ -116,22 +116,22 @@ func TestWorkspacePreview(t *testing.T) {
 	if err := os.WriteFile(goFile, []byte("package main"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a.openWsPreview(goFile)
-	if a.repo.previewLang != "go" {
-		t.Fatalf(".go maps to %q, want go", a.repo.previewLang)
+	a.openFileDrawer(goFile)
+	if a.fdraw.lang != "go" {
+		t.Fatalf(".go maps to %q, want go", a.fdraw.lang)
 	}
 	big := filepath.Join(root, "big.txt")
 	if err := os.WriteFile(big, []byte(strings.Repeat("x", int(wsReadCap)+10)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a.openWsPreview(big)
-	if !a.repo.previewTruncated || len(a.repo.previewText) != int(wsReadCap) {
-		t.Fatalf("truncation wrong: trunc=%v len=%d", a.repo.previewTruncated, len(a.repo.previewText))
+	a.openFileDrawer(big)
+	if !a.fdraw.truncated || len(a.fdraw.text) != int(wsReadCap) {
+		t.Fatalf("truncation wrong: trunc=%v len=%d", a.fdraw.truncated, len(a.fdraw.text))
 	}
 	// A missing file reports its error instead of panicking.
-	a.openWsPreview(filepath.Join(root, "nope.txt"))
-	if a.repo.previewErr == "" {
-		t.Fatal("a missing file should set previewErr")
+	a.openFileDrawer(filepath.Join(root, "nope.txt"))
+	if a.fdraw.err == "" {
+		t.Fatal("a missing file should set drawer err")
 	}
 }
 
@@ -155,11 +155,11 @@ func TestWorkspaceTreeRender(t *testing.T) {
 		t.Fatalf("click the tree row: %v", err)
 	}
 	tst.Frame()
-	if a.repo.previewPath == "" || !strings.Contains(a.repo.previewText, "workspace marker line") {
-		t.Fatalf("clicking the row did not load the preview: %q %q", a.repo.previewPath, a.repo.previewText)
+	if !a.fdraw.open || !strings.Contains(a.fdraw.text, "workspace marker line") {
+		t.Fatalf("clicking the row did not open the drawer: open=%v text=%q", a.fdraw.open, a.fdraw.text)
 	}
 	if ui.Render(a.view, 1280, 820, 1) == nil {
-		t.Fatal("render nil with the preview open")
+		t.Fatal("render nil with the drawer open")
 	}
 }
 
@@ -173,14 +173,15 @@ func TestWorkspaceCommands(t *testing.T) {
 	}
 	a.ws = newWorkspace(t.TempDir())
 	a.loadWsDir(a.ws.root)
+	a.openFileDrawer(filepath.Join(a.ws.root, "x.txt"))
 	if msg := a.runCommand("reload-workspace"); msg == "" {
 		t.Fatal("reload command should toast")
 	}
 	if st := a.wsItemStatus(a.ws.root); st != data.DataUnloaded {
 		t.Fatalf("reload left the root %v, want DataUnloaded", st)
 	}
-	if a.repo.previewPath != "" {
-		t.Fatal("reload kept the preview")
+	if a.fdraw.open {
+		t.Fatal("reload kept the drawer open")
 	}
 }
 
@@ -229,7 +230,7 @@ func TestFmtViewToggle(t *testing.T) {
 	}
 }
 
-// The workspace preview offers the Raw/Fmt toggle for formattable files and
+// The code drawer offers the Raw/Fmt toggle for formattable files and
 // renders both ways.
 func TestPreviewFormatToggle(t *testing.T) {
 	dir := t.TempDir()
@@ -239,18 +240,45 @@ func TestPreviewFormatToggle(t *testing.T) {
 	}
 	a := newApp()
 	a.ws = newWorkspace(dir)
-	a.openWsPreview(filepath.Join(dir, "main.go"))
-	if !formattable(a.repo.previewLang) {
-		t.Fatalf("previewLang %q, want go", a.repo.previewLang)
+	a.openFileDrawer(filepath.Join(dir, "main.go"))
+	if !formattable(a.fdraw.lang) {
+		t.Fatalf("drawer lang %q, want go", a.fdraw.lang)
 	}
 	if ui.Render(a.view, 1280, 820, 1) == nil {
-		t.Fatal("raw preview render nil")
+		t.Fatal("raw drawer render nil")
 	}
-	a.repo.wsFmt.tab = 1
+	a.fdraw.fmt.tab = 1
 	if ui.Render(a.view, 1280, 820, 1) == nil {
-		t.Fatal("formatted preview render nil")
+		t.Fatal("formatted drawer render nil")
 	}
-	if joined := strings.Join(a.repo.wsFmt.render("go", a.repo.previewText), "\n"); !strings.Contains(joined, "x := 1") {
-		t.Fatalf("formatted preview wrong: %q", joined)
+	if joined := strings.Join(a.fdraw.fmt.render("go", a.fdraw.text), "\n"); !strings.Contains(joined, "x := 1") {
+		t.Fatalf("formatted drawer wrong: %q", joined)
+	}
+}
+
+// The sidebar leads with the workspace list: the current root highlighted,
+// recents underneath, and clicking a row switches the workspace.
+func TestSidebarWorkspaceList(t *testing.T) {
+	dir, other := t.TempDir(), t.TempDir()
+	a := newApp()
+	a.ws = newWorkspace(dir)
+	a.recents = []string{dir, other}
+	tst := ui.NewTester(a.view, 1280, 820)
+	tst.Frame()
+	if !tst.HasText("Workspaces") {
+		t.Fatal("the workspace list section is missing")
+	}
+	if _, ok := tst.Find("workspace:" + other); !ok {
+		t.Fatal("the recent workspace row is missing")
+	}
+	if err := tst.Click("workspace:" + other); err != nil {
+		t.Fatalf("click the workspace row: %v", err)
+	}
+	tst.Frame()
+	if a.ws.root != other {
+		t.Fatalf("clicking the row did not switch: %q", a.ws.root)
+	}
+	if !tst.HasText("Sessions") {
+		t.Fatal("the sessions section is missing")
 	}
 }

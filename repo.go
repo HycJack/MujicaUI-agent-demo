@@ -28,8 +28,8 @@ func (a *app) repoPane(c *ui.Context, k tokensT) {
 	})
 }
 
-// workspacePane is the Workspace tab: where the session runs, the real
-// directory tree below it, and the selected file's source at the bottom.
+// workspacePane is the Workspace tab: the real directory tree, filling the
+// pane; picking a file opens it in the large code drawer.
 func (a *app) workspacePane(c *ui.Context, k tokensT) {
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
@@ -55,38 +55,6 @@ func (a *app) workspacePane(c *ui.Context, k tokensT) {
 			a.selectWsNode(path, true)
 		}
 	}
-	a.wsPreview(c, k)
-}
-
-// wsPreview is the Workspace tab's bottom pane: the selected file's source,
-// or a hint while nothing is picked.
-func (a *app) wsPreview(c *ui.Context, k tokensT) {
-	if a.repo.previewPath == "" {
-		ui.Text(c, "Select a file to preview").FontSize(11).TextColor(k.TextMuted)
-		return
-	}
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.Icon(c, icons.Must("file-code")).FontSize(13).TextColor(k.TextMuted)
-		ui.Text(c, a.repo.previewPath).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
-		if a.repo.previewTruncated {
-			ui.Text(c, "truncated").FontSize(10).TextColor(k.TextMuted)
-		}
-		if formattable(a.repo.previewLang) {
-			ui.Segmented(c, &a.repo.wsFmt.tab, "Raw", "Fmt").Width(108)
-		}
-		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(a.repo.previewPath)) })
-	})
-	ui.Box(c).Height(340).Shrink(0).Clip().Children(func() {
-		switch {
-		case a.repo.previewErr != "":
-			ui.Text(c, "⚠ "+a.repo.previewErr).FontSize(12).TextColor(kDanger(c))
-		case a.repo.previewLoading:
-			ui.Text(c, "Loading…").FontSize(12).TextColor(kTextMuted(c))
-		default:
-			code.CodeViewer(c, a.repo.wsFmt.render(a.repo.previewLang, a.repo.previewText), &a.repo.psrc,
-				code.CodeViewerOptions{Language: a.repo.previewLang, Label: a.repo.previewPath})
-		}
-	})
 }
 
 // repositoryPane is the Repository tab: the workspace repository's real
@@ -160,12 +128,19 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 		ui.Text(c, "Working tree clean — nothing to review").FontSize(11).TextColor(kTextMuted(c))
 		return
 	}
+	lang := previewLang(f.Path)
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		git.GitStatusBadge(c, f.Status, git.GitStatusBadgeOptions{})
 		ui.Text(c, f.Path).FontSize(11).TextColor(k.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		a.iconToggle(c, k, "maximize", "Open in large viewer", func() {
+			if a.repo.codeTab == 1 {
+				a.openSourceDrawer(a.repo.vcs.diffWt, lang, f.Path)
+			} else {
+				a.openDiffDrawer(a.repo.vcs.diffFrom, a.repo.vcs.diffTo, lang, f.Path)
+			}
+		})
 		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(f.Path)) })
 	})
-	lang := previewLang(f.Path)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
 		if a.repo.codeTab == 1 && formattable(lang) {

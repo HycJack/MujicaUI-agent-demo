@@ -137,6 +137,7 @@ require (
 | `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`readCapped` 文件预览（256 KiB 上限）、`previewLang` 高亮映射、`attachFile` 附加到对话、`reloadWorkspace`。 |
 | `wsstore.go` | **工作区存储**：`homeDir` 默认根、`workspace.json`（当前工作区 + recents）、`sessions.json`（按工作区分组的全部会话与对话记录）、`openWorkspace` 切换、`restoreSession`、Open-workspace 对话框。 |
+| `drawer.go` | **代码抽屉**：右侧 `overlay.Drawer`（宽 720）大尺寸查看器——树点击打开文件内容（Raw/Fmt + 附加），仓库面板 `maximize` 把 Diff/源码放大进来；内容高度按窗高推导（抽屉内容区是 Scroll，grow 会塌）。 |
 | `vcs.go` | **真实 git 后端**：`runGit`（15s 超时）、`parseStatus`/`parseBranches`/`parseLog`（porcelain 解析）、`collectVCS` 快照、`fileVersions`（HEAD / index / worktree 三方取版本，二进制探测）、`vcsAction`（stage/unstage）、`commitStaged`（含 amend）、`checkoutBranch`/`createBranch`、`loadSelectedDiff`。 |
 | `repo.go` | 右栏检视器：Workspace 标签（目录树 + 文件预览 + 附加按钮）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
 | `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`、`tokensT` 别名。 |
@@ -161,6 +162,8 @@ require (
 type app struct {
     thread    thread                    // 当前会话的对话线程
     repo      repo                      // 仓库检视器状态
+    ws        workspace                 // 工作区（目录树）
+    fdraw     fileDrawer                // 大尺寸代码抽屉（drawer.go）
     conv      chat.ChatConversation     // 当前会话（供 ConversationItem 等使用）
     convList  chat.ConversationListState// 会话列表的选择/滚动
     sessionID string                    // 当前会话 id
@@ -328,12 +331,16 @@ Column (Fill, Background)
 
 ### 6.2 会话栏 `sidebar`
 
-- 宽 260、`Surface` 底色、内边距 10。
-- **工作区切换行**：`folder` 图标 + 当前工作区名（`workspaceName(root)`，Tooltip
-  显示完整路径）+ `chevron-down` 图标按钮 → `openWsDialog()`。
-- `ui.PrimaryButton("New chat")` → `newThread()`。
-- `chat.ConversationList(&a.convList, items, {Label:"Sessions"}, nil)`，`items`
-  只含 `s.ws == a.ws.root` 的会话（**会话按工作区组织**）：
+**工作区列表为主体**（切换工作区是第一轴，会话停靠在下方）：
+
+- **Workspaces 头行**：标题 + `plus` 图标按钮（`openWsDialog()`）。
+- **工作区列表**（`ui.Scroll(Grow 1)`，占侧栏大部分高度）：当前根在最上
+  （`Selection` 底高亮），其后是 recents；每行 `wsRow` = folder 图标 +
+  目录名（粗体）+ 完整路径（小字，`SingleLine`+Tooltip），点击
+  `openWorkspace(path)` 切换；末尾固定一行 "Open workspace…"（手输路径入口）。
+- **Sessions 头行** + `ui.PrimaryButton("New chat")` → `newThread()`。
+- **会话列表**：`chat.ConversationList(&a.convList, items, {Label:"Sessions"}, nil)`
+  固定高 220 停靠底部，`items` 只含 `s.ws == a.ws.root` 的会话：
   - `.Changed()` → `openSession(a.convList.Selected)`。
   - `.Submitted()` → toast。
 
@@ -516,10 +523,11 @@ Column(Fill)
 `workspacePane(c,k)`，自顶向下：
 
 1. **根路径行**：`folder` 图标 + 工作区根路径（`SingleLine` + `Tooltip`）+
-   `refresh-cw` 图标按钮（`reloadWorkspace()`：清空 `nodes` 与树状态、清预览）。
-   根默认是**用户主目录**（`homeDir()`），可从侧栏的切换行或 ⌘K "Open workspace…"
+   `refresh-cw` 图标按钮（`reloadWorkspace()`：清空 `nodes` 与树状态、关闭代码抽屉）。
+   根默认是**用户主目录**（`homeDir()`），可从侧栏的工作区列表或 ⌘K "Open workspace…"
    改为任意目录（见 §9.4）。
-2. **目录树**：`data.Tree[string]`（虚拟化、只构建可见行），`Element.Grow(1).MinHeight(0)`：
+2. **目录树**（占满标签页，预览框已移除）：`data.Tree[string]`（虚拟化、只构建可见行），
+   `Element.Grow(1).MinHeight(0)`：
    - `Roots` = `[root]`（root 为空显示 `Empty` 文案）；
    - `Children`：文件 → `nil`（叶子）；目录 → 已列子路径，未列出返回**空非 nil 切片**；
    - `ItemStatus`：目录返回其加载状态（`DataUnloaded`/`DataLoading`/`DataReady`/`DataFailed`），文件返回 `DataReady`；
@@ -527,11 +535,15 @@ Column(Fill)
      执行并经 `a.redraw` 回 UI 线程（`applyWsDir`），无窗口（测试）同步执行；
    - `Label`：`filepath.Base(path)`。
    - `.Changed()`（单击选中）→ `selectWsNode(path, false)`；`.Submitted()`（Enter/双击）→
-     `selectWsNode(path, true)`。文件 → `openWsPreview`；目录仅在 submitted 时翻转展开。
-3. **预览区**（`wsPreview`）：未选中时显示提示文案；选中后为标题行（`file-code` 图标 +
-   路径 + 超过 256 KiB 显示 `truncated` + 可格式化语言显示 `Raw/Fmt` 分段 +
-   `plus` 附加按钮）+ `ui.Box(Height 340, Clip)` 内的
-   `code.CodeViewer`（加载中/错误分别显示占位与 `⚠` 错误行）。
+     `selectWsNode(path, true)`。文件 → `openFileDrawer`（大抽屉，见下）；目录仅在
+     submitted 时翻转展开。
+
+**代码抽屉（`drawer.go`）**：点击树中文件打开右侧 `overlay.Drawer`（宽 720、
+`DrawerRight`，Escape / 头部 ✕ 关闭）：标题为工作区相对路径，工具行有截断标注、
+`Raw/Fmt` 分段（可格式化语言）与 "Attach to conversation" 按钮，查看器
+`code.CodeViewer` / `git.DiffViewer` 填满抽屉。抽屉内容区是 Scroll（grow 会塌），
+因此查看器高度按窗高推导（`wh - 130`）显式给定。仓库面板底部标题行的 `maximize`
+按钮把当前 Diff（diff 模式）或源码（文件模式）放大进同一抽屉。
 
 **格式化视图（`fmtView` + `formatSource`）**：`Raw/Fmt` 分段切换只影响显示、
 **不写回磁盘**（工作区树保持只读）。`formatSource` 进程内完成——`.go` 走
@@ -541,10 +553,10 @@ Column(Fill)
 
 **附加到对话（`attachFile`）**：把文件加入 composer 的 `chat.ContextChips`
 （`thread.ctx`，`ContextItem{ID:"file:<相对路径>", Kind:ContextFile}`）。入口有三处：
-预览区标题行的 `plus` 按钮、Repository 底部面板的 `plus` 按钮、ChangesList 上的
-双击/Enter（`Submitted()`）。重复附加去重（toast "Already attached"），上限 8 个。
-`send()` 时把附件内容折叠进消息：可见行只追加 `Attached: \`a\`, \`b\``，LLM 消息
-（`row.llmText`，`historyMessages` 优先取用）携带 `--- 路径 ---` + 内容
+代码抽屉的 "Attach to conversation" 按钮、Repository 底部面板的 `plus` 按钮、
+ChangesList 上的双击/Enter（`Submitted()`）。重复附加去重（toast "Already attached"），
+上限 8 个。`send()` 时把附件内容折叠进消息：可见行只追加 `Attached: \`a\`, \`b\``，
+LLM 消息（`row.llmText`，`historyMessages` 优先取用）携带 `--- 路径 ---` + 内容
 （单文件 64 KiB 上限，读取失败写明原因），发送后清空 chips。
 
 **目录列举规则（`listDir`）**：跳过 `.git`、`.gocache`、`.gopath`、`.mygo`、`node_modules`、
@@ -552,9 +564,10 @@ Column(Fill)
 目录排前、文件排后，各按大小写不敏感名称排序。子目录在父目录列出时注册为
 `DataUnloaded`，展开时才真正读盘（懒加载）。
 
-**文件读取（`readCapped`）**：最多读 256 KiB，超出置 `previewTruncated`；读失败置
-`previewErr`。`previewLang` 按扩展名映射高亮语言（`.go`→go、`.sh/.bash`→shell、
-`.js/.ts`→javascript/typescript、`.py`、`.json`、`.sql`），其余纯文本（高亮器对未知语言安全回退）。
+**文件读取（`readCapped`）**：最多读 256 KiB，超出置抽屉的 `truncated`；读失败置
+抽屉的 `err`。`previewLang` 按扩展名映射高亮语言（`.go`→go、`.sh/.bash/.zsh`→shell、
+`.js/.jsx/.mjs/.cjs`→javascript、`.ts/.tsx`→typescript、`.py`、`.json`、`.sql`），
+其余纯文本（高亮器对未知语言安全回退）。
 
 ### 9.2 Repository 标签（真实 git）
 
@@ -580,7 +593,8 @@ Column(Fill)
    `.Amended()` → `commitStaged(true)`（有标题带 `-m` 重写，无标题 `--amend --no-edit`）。
    提交期间 Busy 锁输入，成功后清空消息并刷新。
 6. **底部面板**（选中变更的 Diff / 源码）：
-   - 标题行：`git.GitStatusBadge(status)` + 路径 + `plus` 附加按钮。
+   - 标题行：`git.GitStatusBadge(status)` + 路径 + `maximize` 放大到代码抽屉 +
+     `plus` 附加按钮。
    - `ui.Segmented(&codeTab, "Diff", "Source")`（宽 160）；Source 且可格式化时
      追加 `Raw/Fmt` 分段（宽 108，复用 §9.1 的 `fmtView`，实例独立）。
    - `ui.Box(Grow 1, MinHeight 220, Clip)` 内，加载中/错误有占位：
@@ -692,9 +706,13 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 - [ ] 输入一句话回车 → 追加用户行 + 思考/正文 + 工具行，列表滚到底。
 - [ ] `New chat` / ⌘N → 清空到欢迎页；能力卡示例可填入草稿；starter chip 可即发。
 - [ ] 会话列表切到 `c4` / `c1` → 内容随之变化；切走再切回保留草稿。
-- [ ] 侧栏顶部显示当前工作区名；列表只含该工作区的会话；点切换行（或 ⌘K
-  "Open workspace…"）打开对话框，选最近目录或输入路径可切换；切换后树/git/会话
-  全部重根，重启后恢复上次工作区与会话（`workspace.json` / `sessions.json`）。
+- [ ] 侧栏以**工作区列表为主体**：当前根高亮在首行、recents 在下、末行
+  "Open workspace…"；点行即切换；`plus` 打开路径对话框；Sessions 停靠底部
+  （固定高 220）只列当前工作区的会话；重启后恢复上次工作区与会话
+  （`workspace.json` / `sessions.json`）。
+- [ ] 代码抽屉：树中点击文件滑出右侧大抽屉（宽 720），内容填满、Raw/Fmt 可切换、
+  可附加到对话，Escape/✕ 关闭；仓库面板 `maximize` 把 Diff/源码放大进抽屉；
+  刷新工作区会关闭抽屉。
 - [ ] ⌘B / ⌘J 折叠左栏 / 右栏；标题栏两个按钮同效。
 - [ ] ⌘K 打开面板；9 条命令各自生效。
 - [ ] Workspace 标签：树列出真实目录（目录在前、噪音目录跳过）；展开子目录懒加载；
@@ -705,8 +723,9 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   提交输入写标题后 Commit 真实提交；切分支/建分支生效；刷新按钮重收状态。
 - [ ] Settings：正文与分隔线/滚动条留白（`PaddingX(22)`）；Reasoning 在 Providers
   分区且为 Off/Low/Medium/High 四档；Agent 分区不再有推理项；分区切换高度不变。
-- [ ] 代码查看：预览高 340、仓库底部 Diff/源码区至少 220 且随空间生长；`.go`/`.json`
-  出现 Raw/Fmt 分段，Fmt 显示 gofmt/美化内容（不写盘）；`.jsx`/`.zsh` 等映射高亮。
+- [ ] 代码查看：树点击打开大抽屉（宽 720、内容填满）；`.go`/`.json` 出现 Raw/Fmt
+  分段，Fmt 显示 gofmt/美化内容（不写盘）；`.jsx`/`.zsh` 等映射高亮；仓库面板
+  `maximize` 放大 Diff/源码。
 - [ ] 助理消息：复制写入剪贴板；重新生成有反馈。
 - [ ] 终端运行卡在 `rowCommand` 形态下可中止。
 
@@ -750,32 +769,33 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    分别落到正确的 `showRepo`/`paneTab`/`codeTab`，`workspace-open` 打开工作区对话框。
 5. **`TestSettingsDialogStableHeight` / `TestSettingsBodyHeight`**（`settings_nav_test.go`）——
    正文高度由窗高固定：切换分区正文矩形与标题 Y 不变，且随窗口变矮而变矮；钳制函数单测。
-6. **`TestFormatSource` / `TestFmtViewToggle` / `TestPreviewFormatToggle`**
-   （`workspace_test.go`）—— gofmt 规范化 `.go`、`json.Indent` 美化、解析失败/其它语言
-   不可格式化；`fmtView` 原始→格式化切换、缓存键随内容失效；预览区 Raw/Fmt 渲染。
-7. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose`**（`config_test.go`）——
+6. **`TestSettingsPersistence*` / `TestSettingsSaveOnClose`**（`config_test.go`）——
    持久化往返（含 `maxTokField`/seededModel 预置）、瞬态字段不落盘、缺失/损坏回退默认、
    Escape 关闭对话框即保存。
 7. **`TestListDir` / `TestWorkspaceLazyLoad` / `TestWorkspacePreview` /
    `TestWorkspaceTreeRender` / `TestWorkspaceCommands`**（`workspace_test.go`）——
    用 `t.TempDir()` 造真实目录：列举排序（目录在前、大小写不敏感）与忽略规则；
-   懒加载状态机（Unloaded→Loading→Ready/Failed）、文件是叶子；预览读取/语言映射/
-   256 KiB 截断/缺失文件错误；`NewTester` 打开根目录 → 树列出文件 → 点击行加载预览；
-   workspace / reload-workspace 命令。
-8. **`TestParseStatus` / `TestParseBranchesAndLog` / `TestVCSRealRepo` /
+   懒加载状态机（Unloaded→Loading→Ready/Failed）、文件是叶子；抽屉读取/语言映射/
+   256 KiB 截断/缺失文件错误；`NewTester` 打开根目录 → 树列出文件 → 点击行滑出
+   抽屉；workspace / reload-workspace 命令（reload 关闭抽屉）。
+8. **`TestFormatSource` / `TestFmtViewToggle` / `TestPreviewFormatToggle` /
+   `TestSidebarWorkspaceList`**（`workspace_test.go`）—— gofmt 规范化 `.go`、
+   `json.Indent` 美化、解析失败/其它语言不可格式化；`fmtView` 原始→格式化切换、
+   缓存键随内容失效；抽屉 Raw/Fmt 渲染；侧栏工作区列表渲染 + 点行切换。
+9. **`TestParseStatus` / `TestParseBranchesAndLog` / `TestVCSRealRepo` /
    `TestRepositoryPaneAttach`**（`vcs_test.go`）—— porcelain 解析（分支头、
    `MM` 双条、重命名、删除）；用真实 git 命令在临时目录建仓库后跑完整版本管理闭环：
    未跟踪 → stage → 提交 → 再修改 → 建分支/切分支，断言每步的文件/版本/历史；
    `NewTester` 渲染 Repository 标签并点击附加按钮。
-9. **`TestAttachFile`**（`vcs_test.go`）—— 附加去重、发送后 chips 清空、可见行带
+10. **`TestAttachFile`**（`vcs_test.go`）—— 附加去重、发送后 chips 清空、可见行带
    `Attached:` 注记、`llmText` 携带文件内容。
-10. **`TestWsPrefsRoundtrip` / `TestSessionsRoundtrip` / `TestOpenWorkspace` /
+11. **`TestWsPrefsRoundtrip` / `TestSessionsRoundtrip` / `TestOpenWorkspace` /
     `TestSidebarFiltersSessions` / `TestWorkspaceDialog` / `TestHomeDirDefault`**
     （`wsstore_test.go`）—— `workspace.json` 往返（当前根 + recents 置顶）；
     `sessions.json` 往返（含在途会话的行、全部会话绑定工作区）；切换工作区的
     校验/重根/会话恢复/recents；侧栏只列当前工作区的会话（渲染断言其它工作区
     会话不出现）；对话框渲染 + 点 Open 真实切换；默认根 = 用户主目录。
-11. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
+12. **`TestDialogCloses`**（`dialogclose_test.go`）—— Escape 与背景点击关闭 Settings，
    且两条关闭路径都写出 `settings.json`（`configPath` 指向临时目录，不碰真实配置）。
 
 ---

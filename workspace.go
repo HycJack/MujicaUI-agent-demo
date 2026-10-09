@@ -180,8 +180,8 @@ func (a *app) applyWsDir(path string, kids []wsEntry, err error) {
 }
 
 // selectWsNode reacts to a tree selection: files (which are not registered
-// as nodes) open in the preview, an explicitly submitted directory toggles
-// open.
+// as nodes) open in the code drawer, an explicitly submitted directory
+// toggles open.
 func (a *app) selectWsNode(path string, submitted bool) {
 	if n, ok := a.ws.nodes[path]; ok && n.dir {
 		if submitted {
@@ -189,38 +189,7 @@ func (a *app) selectWsNode(path string, submitted bool) {
 		}
 		return
 	}
-	a.openWsPreview(path)
-}
-
-// openWsPreview loads a workspace file into the preview pane — async with
-// a window, synchronous headless.
-func (a *app) openWsPreview(path string) {
-	if path == a.repo.previewPath && (a.repo.previewLoading || a.repo.previewText != "" || a.repo.previewErr != "") {
-		return
-	}
-	a.repo.previewPath = path
-	a.repo.previewLang = previewLang(path)
-	a.repo.previewText, a.repo.previewErr = "", ""
-	a.repo.previewTruncated, a.repo.previewLoading = false, true
-	if a.redraw == nil {
-		text, truncated, err := readCapped(path, wsReadCap)
-		a.applyWsPreview(text, truncated, err)
-		return
-	}
-	go func() {
-		text, truncated, err := readCapped(path, wsReadCap)
-		a.redraw(func() { a.applyWsPreview(text, truncated, err) })
-	}()
-}
-
-// applyWsPreview stores a finished file read.
-func (a *app) applyWsPreview(text string, truncated bool, err error) {
-	a.repo.previewLoading = false
-	if err != nil {
-		a.repo.previewErr = err.Error()
-		return
-	}
-	a.repo.previewText, a.repo.previewTruncated = text, truncated
+	a.openFileDrawer(path)
 }
 
 // attachFile adds a workspace file to the composer's context chips and
@@ -247,12 +216,11 @@ func (a *app) attachFile(path string) string {
 	return "Attached " + rel
 }
 
-// reloadWorkspace drops the listings and the preview so the pane re-reads
-// the disk.
+// reloadWorkspace drops the listings and closes the code drawer so the
+// pane re-reads the disk.
 func (a *app) reloadWorkspace() {
 	a.ws.reset()
-	a.repo.previewPath, a.repo.previewText, a.repo.previewErr = "", "", ""
-	a.repo.previewLoading, a.repo.previewTruncated = false, false
+	a.fdraw = fileDrawer{}
 }
 
 // readCapped reads up to limit bytes of a file and reports whether it was

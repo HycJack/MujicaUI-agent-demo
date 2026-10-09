@@ -155,18 +155,27 @@ type repo struct {
 	codeTab  int // inspector bottom pane: 0 working diff, 1 file source
 	paneTab  int // right pane: 0 workspace tree, 1 repository
 
-	// formatted-view toggles (workspace preview / repository source tab)
-	wsFmt  fmtView
+	// formatted-view toggle (repository source tab)
 	srcFmt fmtView
+}
 
-	// workspace file preview (the tree's selected file)
-	psrc             code.CodeViewerState
-	previewPath      string
-	previewLang      string
-	previewText      string
-	previewErr       string
-	previewLoading   bool
-	previewTruncated bool
+// fileDrawer is the large right-hand code viewer: the workspace tree opens
+// file contents in it, and the repository pane maximizes its diff or source
+// into it. It replaces the old small inline preview box.
+type fileDrawer struct {
+	open      bool
+	title     string // display title: workspace-relative path or file name
+	lang      string
+	text      string
+	err       string
+	loading   bool
+	truncated bool
+	fmt       fmtView // Raw/Fmt for file contents
+	src       code.CodeViewerState
+
+	diffMode bool   // render from/to as a DiffViewer instead of source
+	from, to string // diff sides in diffMode
+	ddiff    git.DiffViewerState
 }
 
 // LLMSettings carries the pi-ai-go backend configuration the provider and
@@ -211,6 +220,7 @@ type app struct {
 	thread    thread
 	repo      repo
 	ws        workspace
+	fdraw     fileDrawer
 	conv      chat.ChatConversation
 	convList  chat.ConversationListState
 	sessionID string

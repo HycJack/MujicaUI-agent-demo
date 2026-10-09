@@ -37,6 +37,7 @@ func (a *app) view(c *ui.Context) {
 	})
 	a.settingsDialogs(c)
 	a.workspaceDialog(c)
+	a.fileDrawerView(c)
 	a.shortcuts(c)
 	a.palette(c)
 }
@@ -81,22 +82,44 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 	})
 }
 
-// sidebar is the conversation index: a workspace switcher over a New-chat
-// button and the list of the current workspace's sessions.
+// sidebar leads with the workspace list — switching workspace is the
+// primary axis, the way Codex-style consoles put projects first — and
+// docks the current workspace's sessions underneath it.
 func (a *app) sidebar(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(260).Shrink(0).Background(k.Surface).Padding(10, 10, 10).Gap(8).Children(func() {
-		// Sessions are organized per workspace, the way Codex-style agents
-		// group a project's threads; the picker re-roots everything.
+		// Workspaces: the current root first, then the recents; the plus
+		// button (and the trailing row) open the by-path picker.
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.Accent)
-			ui.Text(c, workspaceName(a.ws.root)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(a.ws.root)
-			a.iconToggle(c, k, "chevron-down", "Change workspace", a.openWsDialog)
+			ui.Text(c, "Workspaces").FontSize(11).TextColor(k.TextMuted).Grow(1)
+			a.iconToggle(c, k, "plus", "Open workspace…", a.openWsDialog)
 		})
+		ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
+			ui.Column(c).Gap(2).Children(func() {
+				a.wsRow(c, k, a.ws.root)
+				for _, r := range a.recents {
+					if r != a.ws.root {
+						a.wsRow(c, k, r)
+					}
+				}
+				b := ui.ButtonBase(c).Label("workspace-open-row").FillWidth().Padding(8).Radius(7).Gap(8).Cursor(ui.CursorPointer)
+				if b.Hovered() {
+					b.Background(k.SurfaceHover)
+				}
+				if b.Clicked() {
+					a.openWsDialog()
+				}
+				b.Children(func() {
+					ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
+					ui.Text(c, "Open workspace…").FontSize(12).TextColor(k.TextMuted)
+				})
+			})
+		})
+		// Sessions of the current workspace, docked below the list.
+		ui.Text(c, "Sessions").FontSize(11).TextColor(k.TextMuted)
 		newBtn := ui.PrimaryButton(c, "New chat")
 		if newBtn.Clicked() {
 			a.newThread()
 		}
-		ui.Text(c, "Sessions").FontSize(11).TextColor(k.TextMuted)
 		items := make([]chat.ChatConversation, 0, len(a.sessions))
 		for _, s := range a.sessions {
 			if s.ws != a.ws.root {
@@ -105,13 +128,38 @@ func (a *app) sidebar(c *ui.Context, k tokensT) {
 			items = append(items, chat.ChatConversation{ID: s.id, Title: s.title, Updated: s.updated, Pinned: s.pinned})
 		}
 		conv := chat.ConversationList(c, &a.convList, items, chat.ConversationListOptions{Label: "Sessions"}, nil)
-		conv.Element.Grow(1).MinHeight(0)
+		conv.Element.Height(220).Shrink(0)
 		if conv.Changed() {
 			a.openSession(a.convList.Selected)
 		}
 		if conv.Submitted() {
 			c.Toast("Opened " + a.convList.Selected)
 		}
+	})
+}
+
+// wsRow is one workspace entry: folder icon, name and full path; the
+// current workspace is highlighted, clicking switches onto it.
+func (a *app) wsRow(c *ui.Context, k tokensT, path string) {
+	current := path == a.ws.root
+	b := ui.ButtonBase(c).Label("workspace:" + path).Tooltip(path).FillWidth().Padding(8).Radius(7).Gap(8).Cursor(ui.CursorPointer)
+	switch {
+	case current:
+		b.Background(k.Selection)
+	case b.Hovered():
+		b.Background(k.SurfaceHover)
+	}
+	if b.Clicked() {
+		if msg := a.openWorkspace(path); msg != "" {
+			c.Toast(msg)
+		}
+	}
+	b.Children(func() {
+		ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.Accent)
+		ui.Column(c).Gap(1).Children(func() {
+			ui.Text(c, workspaceName(path)).FontSize(12).Bold().SingleLine()
+			ui.Text(c, path).FontSize(10).TextColor(k.TextMuted).SingleLine()
+		})
 	})
 }
 
