@@ -83,7 +83,7 @@ func Run(ctx context.Context, cfg Config, history []Message, cb Callbacks) error
 	loopCfg := agent.AgentLoopConfig{
 		Model:               model,
 		SystemPrompt:        cfg.SystemPrompt,
-		Tools:               Tools(cfg.Workdir),
+		Tools:               Tools(cfg.Workdir, Gate{Mode: ModeFull}),
 		ToolExecution:       core.ToolExecSequential,
 		ExecEnv:             core.NewDefaultExecutionEnvWithDir(cfg.Workdir),
 		SimpleStreamOptions: streamOptions(cfg),
