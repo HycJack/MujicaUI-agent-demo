@@ -51,6 +51,7 @@ type row struct {
 	steps     []step     // the process timeline: reasoning segments and tool calls in order
 	procOpen  bool       // process area (group header) state: open while streaming, folds on completion
 	streaming bool       // the reply is still streaming (text renders plain)
+	note      string     // the turn's closing one-liner (claude cost/session, compact notice); not persisted
 }
 
 // step is one entry of a reply's process timeline: a stretch of reasoning,
@@ -179,6 +180,9 @@ type thread struct {
 	model string
 	think bool
 	ctx   []chat.ContextItem
+	// claudeID is the session id the claude backend reported; the next
+	// turn rides --resume with it. Empty for builtin sessions.
+	claudeID string
 }
 
 // session is one item of the sessions list; ws is the workspace
@@ -325,6 +329,8 @@ type app struct {
 	cancelFn      context.CancelFunc // cancels the current streaming reply
 	provView      providerView       // providers config pane state
 	claudeBin     string             // resolved claude CLI path ("" when not installed)
+	pending       *approvalReq       // the live permission ask, rendered as a card
+	streamRowID   string             // the row the in-flight reply streams into ("" when idle)
 	savedSettings string             // last persisted settings JSON (live-save dirty check)
 
 	// workspace

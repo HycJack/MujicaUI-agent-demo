@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"crux-agent/internal/engine"
+
 	"github.com/ZacharyZhang-NY/MujicaUI/agent"
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 	"github.com/ZacharyZhang-NY/MujicaUI/core"
@@ -85,12 +87,19 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 			if r.thinkText != "" || len(r.tools) > 0 || r.tool != nil {
 				a.processBlock(c, r)
 			}
+			// A permission ask parks its card here while the engine waits.
+			if a.pending != nil && a.pending.rowID == r.id {
+				a.approvalCard(c)
+			}
 			ans, _ := r.answerText()
 			switch {
 			case r.streaming:
 				chat.StreamingText(c, ans, chat.StreamingTextOptions{Streaming: ans != ""})
 			case ans != "":
 				mdView(c, ans) // selectable markdown once the reply is done
+			}
+			if r.note != "" {
+				ui.Text(c, r.note).FontSize(11).TextColor(tokens(c).TextMuted).MaxLines(2)
 			}
 			a.actions(c, r)
 		})
@@ -462,6 +471,12 @@ func (a *app) composer(c *ui.Context) {
 			a.send()
 		}
 		ui.Row(c).Gap(14).AlignItems(ui.Center).Wrap().Children(func() {
+			// The permission switch: three modes, the composer owns the
+			// choice (spec §2). Frozen while a reply streams.
+			modeIdx := int(engine.ParseMode(a.llm.Mode))
+			if seg := ui.Segmented(c, &modeIdx, "Read-only", "Agent", "Full access").Label("Permissions"); seg.Changed() && !a.llm.Busy {
+				a.llm.Mode = engine.Mode(modeIdx).String()
+			}
 			// The active backend, set on the Agent settings page (⌘K → Agent).
 			ui.Text(c, a.backendLabel()).FontSize(12).TextColor(tokens(c).TextMuted).SingleLine()
 			chat.TokenCounter(c, 6400, 8000)

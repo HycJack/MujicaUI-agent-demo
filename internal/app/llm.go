@@ -27,7 +27,9 @@ import (
 	"github.com/ZacharyZhang-NY/MujicaUI/chat"
 )
 
-// engineConfig projects the app's LLM settings onto the engine's Config.
+// engineConfig projects the app's LLM settings onto the engine's Config,
+// gate included: the backend kind, the mode the composer selected, the
+// approval bridge, and the claude CLI/session wiring.
 func (a *app) engineConfig() engine.Config {
 	return engine.Config{
 		Provider:     a.llm.Provider,
@@ -37,6 +39,12 @@ func (a *app) engineConfig() engine.Config {
 		SystemPrompt: a.llm.SystemPrompt,
 		Thinking:     a.llm.Thinking,
 		Workdir:      a.ws.root,
+
+		Backend:         a.llm.Backend,
+		Mode:            engine.ParseMode(a.llm.Mode),
+		OnApproval:      a.awaitApproval,
+		ClaudeBin:       a.claudeBin,
+		ClaudeSessionID: a.thread.claudeID,
 	}
 }
 
@@ -136,6 +144,7 @@ func (a *app) startStream(userIdx int, rowID string) {
 	curID := rowID
 	a.llm.Busy = true
 	a.llm.LastError = ""
+	a.streamRowID = curID
 	ctx, cancel := context.WithCancel(context.Background())
 	a.setCancel(cancel)
 
@@ -151,6 +160,8 @@ func (a *app) startStream(userIdx int, rowID string) {
 			a.redraw(func() {
 				a.llm.Busy = false
 				a.cancelFn = nil
+				a.streamRowID = ""
+				a.clearPendingFor(curID) // a stopped run takes its card with it
 				a.endStreamingRow(curID)
 				a.thread.list.ScrollToEnd()
 				a.persistSessions()
@@ -170,6 +181,18 @@ func (a *app) startStream(userIdx int, rowID string) {
 			},
 			OnToolEnd: func(callID, result string, isErr bool, dur time.Duration) {
 				a.redraw(func() { a.finishToolRow(callID, result, isErr, dur) })
+			},
+			// The claude backend's turn bookkeeping: the session id rides
+			// --resume next turn; the note (cost/session, compaction) is
+			// the reply's closing one-liner.
+			OnSession: func(sessionID string) {
+				a.redraw(func() {
+					a.thread.claudeID = sessionID
+					a.markDirty(a.sessionID)
+				})
+			},
+			OnNote: func(text string) {
+				a.redraw(func() { s.setRow(func(r *row) { r.note = text }) })
 			},
 		}
 		if err := engine.Run(ctx, cfg, a.historyMessages(), cb); err != nil && ctx.Err() == nil {
@@ -215,9 +238,25 @@ func (s *agentStream) setRow(fn func(*row)) {
 	}
 }
 
+// mapClaudeTool normalizes the claude CLI's tool names onto the builtin
+// tools' names, so every card kind, icon and title downstream just
+// works (spec §4.4).
+func mapClaudeTool(name string) string {
+	switch name {
+	case "Bash":
+		return "bash"
+	case "Edit", "Write":
+		return "write_file"
+	case "Read":
+		return "read_file"
+	}
+	return name
+}
+
 // appendTurnTool adds a running tool invocation to the reply's merged card
 // block (UI thread).
 func (a *app) appendTurnTool(rowID, callID, name, args string) {
+	name = mapClaudeTool(name)
 	t := &toolRun{callID: callID, name: name, args: args, state: muiagent.AgentRunning}
 	if name == "bash" {
 		var p struct {
@@ -281,6 +320,21 @@ func (a *app) finishToolRow(callID, result string, isErr bool, dur time.Duration
 						path, old, new = d.Path, d.Old, d.New
 					}
 					t.change = muiagent.FileChange{Path: path, Old: old, New: new}
+				} else {
+					// The claude backend's tool results are plain text; its
+					// Edit/Write args carry the change instead.
+					var p struct {
+						FilePath  string `json:"file_path"`
+						OldString string `json:"old_string"`
+						NewString string `json:"new_string"`
+						Content   string `json:"content"`
+					}
+					if json.Unmarshal([]byte(t.args), &p) == nil && p.FilePath != "" {
+						t.change = muiagent.FileChange{
+							Path: p.FilePath, Old: p.OldString,
+							New: firstNonEmpty(p.NewString, p.Content),
+						}
+					}
 				}
 			}
 			a.thread.list.ScrollToEnd()
@@ -309,6 +363,16 @@ func toolResultText(result string) string {
 		return r.Content[0].Text
 	}
 	return result
+}
+
+// firstNonEmpty returns the first argument that is not empty.
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // streamError records a stream failure on the assistant row and in settings.

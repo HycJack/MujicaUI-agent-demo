@@ -326,7 +326,7 @@ func (a *app) persistDirtyTranscripts() {
 			delete(a.dirty, id)
 			continue
 		}
-		ts := store.Transcript{Mode: storeMode(t.mode)}
+		ts := store.Transcript{Mode: storeMode(t.mode), ClaudeID: t.claudeID}
 		for _, r := range t.rows {
 			ts.Rows = append(ts.Rows, storeMsg(r))
 		}
@@ -395,7 +395,7 @@ func (a *app) loadTranscript(id string) {
 	if err != nil {
 		return // never opened, or lost: starts empty
 	}
-	t := thread{mode: uiMode(ts.Mode)}
+	t := thread{mode: uiMode(ts.Mode), claudeID: ts.ClaudeID}
 	for _, m := range ts.Rows {
 		t.rows = append(t.rows, loadMsg(m))
 	}
