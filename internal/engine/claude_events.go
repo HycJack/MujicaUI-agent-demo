@@ -344,14 +344,15 @@ func approvalSummary(tool string, raw json.RawMessage) string {
 	return Trunc(tool+" "+ShortArgs(raw), 160)
 }
 
-// writeControl writes one control_response line to the CLI's stdin.
+// writeControl writes one control_response line to the CLI's stdin
+// (CRLF-terminated; see RunClaude).
 func (r *claudeRun) writeControl(response map[string]any) {
 	if r.stdin == nil {
 		r.wrote = append(r.wrote, response)
 		return
 	}
 	line, _ := json.Marshal(map[string]any{"type": "control_response", "response": response})
-	_, _ = r.stdin.Write(append(line, '\n'))
+	_, _ = r.stdin.Write(append(line, '\r', '\n'))
 }
 
 // block mirrors one content block of a Claude Code message.
