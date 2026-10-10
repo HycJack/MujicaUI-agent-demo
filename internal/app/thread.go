@@ -22,10 +22,11 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// threadView is the center pane: the message list over the composer.
+// threadView is the center pane: the message list over the composer,
+// framed in the sticker sheet's 2px ink rule.
 func (a *app) threadView(c *ui.Context) {
 	k := tokens(c)
-	ui.Box(c).Grow(1).MinHeight(0).Border(1, k.Border).Clip().Children(func() {
+	ui.Box(c).Grow(1).MinHeight(0).Border(2, k.Border).Radius(neoRadiusCard).Clip().Children(func() {
 		if len(a.thread.rows) == 0 {
 			a.welcome(c, k)
 			return
@@ -160,12 +161,13 @@ func (a *app) actions(c *ui.Context, r *row) {
 	})
 }
 
-// msgIconBtn is a small quiet icon button; it reports its click.
+// msgIconBtn is a small quiet sticker button; it reports its click.
 func msgIconBtn(c *ui.Context, k tokensT, icon, label string) bool {
-	b := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(5).Center().Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(6).Center().Cursor(ui.CursorPointer)
 	if b.Hovered() {
 		b.Background(k.SurfaceHover)
 	}
+	b.Border(1, k.Border)
 	clicked := b.Clicked()
 	b.Children(func() {
 		ui.Icon(c, icons.Must(icon)).FontSize(12).TextColor(k.TextMuted)
@@ -212,8 +214,9 @@ func (a *app) composer(c *ui.Context) {
 		if id, ok := chat.ContextChips(c, a.thread.ctx, chat.ContextChipsOptions{Max: 2}).Removed(); ok {
 			a.thread.ctx = slices.DeleteFunc(a.thread.ctx, func(it chat.ContextItem) bool { return it.ID == id })
 		}
-		ui.Column(c).MinWidth(0).Background(k.Background).Border(1, k.ControlBorder).
-			Radius(theme.CardRadius).Padding(6).Gap(2).Children(func() {
+		ui.Column(c).MinWidth(0).Background(k.Surface).Border(2, k.ControlBorder).
+			Radius(neoRadiusCard).Shadow(neoShadowCard, neoShadowCard, 0, 0, k.Border).
+			Padding(8).Gap(2).Children(func() {
 			ta := input.TextArea(c, &a.thread.draft, input.TextAreaOptions{
 				Placeholder: "Direct Crux — it can read files, run commands and edit.",
 				Label:       "Message", MinHeight: 44, MaxHeight: 180,

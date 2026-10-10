@@ -172,7 +172,7 @@ func TestRepositoryPaneAttach(t *testing.T) {
 	if len(a.thread.ctx) != 1 || a.thread.ctx[0].ID != "file:jobs/quota.go" {
 		t.Fatalf("attach button did not attach the selected change: %+v", a.thread.ctx)
 	}
-	if ui.Render(a.view, 1280, 820, 1) == nil {
+	if tst.Image() == nil {
 		t.Fatal("render nil after attaching")
 	}
 }

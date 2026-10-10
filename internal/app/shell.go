@@ -21,11 +21,16 @@ import (
 )
 
 // view is the whole window. Crux installs MujicaUI's theme, lays the
-// desk out, then binds the console shortcuts and the command palette.
+// desk out over the sticker sheet's dot grain, then binds the console
+// shortcuts and the command palette.
 func (a *app) view(c *ui.Context) {
 	useTheme(c)
 	k := tokens(c)
-	ui.Column(c).Fill().Background(k.Background).Children(func() {
+	root := ui.Column(c).Fill().Background(k.Background)
+	if a.dotGrid {
+		root.Draw(neoDotGrid(k, 22, 1.2))
+	}
+	root.Children(func() {
 		a.titlebar(c, k)
 		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 			if a.navOpen {
@@ -104,12 +109,13 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 // switches workspace first when it belongs elsewhere).
 func (a *app) sidebar(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(260).Shrink(0).Background(neoSidebarBG(k)).Padding(10, 10, 10).Gap(8).Children(func() {
-		newBtn := ui.PrimaryButton(c, "New chat").FillWidth()
-		if newBtn.Clicked() {
-			a.newThread()
-		}
+		ui.Row(c).FillWidth().Children(func() {
+			if b := ui.PrimaryButton(c, "New chat"); b.Clicked() {
+				a.newThread()
+			}
+		})
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Workspaces").FontSize(11).TextColor(k.TextMuted).Grow(1)
+			ui.Text(c, "WORKSPACES").Font(fontPixel).FontSize(8).TextColor(k.TextMuted).Grow(1)
 			a.iconToggle(c, k, "plus", "Open workspace…", a.openWsDialog)
 		})
 		restore := data.DataSelectTheme(c, 0)
@@ -173,10 +179,10 @@ func (a *app) sessionTreeChildren(item string) []string {
 	return out
 }
 
-// sessionTreeRow builds one sidebar-tree row: a workspace line (folder,
-// name, session count; the current root highlighted; click toggles open)
-// or a session line (icon, title; click opens it, switching workspace if
-// it belongs to another root).
+// sessionTreeRow builds one sidebar-tree row, sticker style: a workspace
+// line (folder, name, count chip; click toggles open) or a session line —
+// the state dot, the title and the right-aligned age — where the current
+// session is the full sky block, the slot-machine selection rule.
 func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
 	if path, ok := strings.CutPrefix(item, "ws:"); ok {
 		count := 0
@@ -185,18 +191,8 @@ func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
 				count++
 			}
 		}
-		current := path == a.ws.root
-		row := ui.Row(c).Label(item).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Tooltip(path).Cursor(ui.CursorPointer)
-		if current {
-			row.TextColor(k.AccentText)
-		}
-		row.Children(func() {
-			ui.Icon(c, icons.Must("folder")).FontSize(14)
-			ui.Text(c, fsutil.WorkspaceName(path)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0)
-			if count > 0 {
-				ui.Text(c, strconv.Itoa(count)).FontSize(10).TextColor(k.TextMuted)
-			}
-		})
+		row := ui.Row(c).Label(item).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).
+			Tooltip(path).Cursor(ui.CursorPointer).Padding(3, 6).Radius(neoRadiusChip)
 		if row.Clicked() {
 			if a.sessTree.Open.Has(item) {
 				a.sessTree.Open.Remove(item)
@@ -204,6 +200,15 @@ func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
 				a.sessTree.Open.Add(item)
 			}
 		}
+		row.Children(func() {
+			ui.Icon(c, icons.Must("folder")).FontSize(14)
+			ui.Text(c, fsutil.WorkspaceName(path)).FontSize(12).Bold().SingleLine().Grow(1).MinWidth(0)
+			if count > 0 {
+				neoChipBuild(c, k, k.Surface, func() {
+					ui.Text(c, strconv.Itoa(count)).FontSize(10).Bold().TextColor(k.Text)
+				})
+			}
+		})
 		return
 	}
 	id, _ := strings.CutPrefix(item, "sess:")
@@ -214,14 +219,14 @@ func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
 			break
 		}
 	}
-	row := ui.Row(c).Label(item).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-	if id == a.sessionID {
-		row.TextColor(k.AccentText)
+	current := id == a.sessionID
+	row := ui.Row(c).Label(item).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).
+		Cursor(ui.CursorPointer).Padding(3, 6).Radius(neoRadiusChip)
+	if current {
+		row.Background(k.Accent)
+	} else if row.Hovered() {
+		row.Background(k.SurfaceHover)
 	}
-	row.Children(func() {
-		ui.Icon(c, icons.Must("message-square")).FontSize(13).TextColor(k.TextMuted)
-		ui.Text(c, sess.title).FontSize(12).SingleLine().Grow(1).MinWidth(0)
-	})
 	if row.Clicked() {
 		if sess.ws != "" && filepath.Clean(sess.ws) != filepath.Clean(a.ws.root) {
 			if msg := a.openWorkspace(sess.ws); msg != "" {
@@ -230,6 +235,20 @@ func (a *app) sessionTreeRow(c *ui.Context, k tokensT, item string) {
 		}
 		a.openSession(id)
 	}
+	row.Children(func() {
+		// The state dot: the open session's eye is filled, the rest are
+		// hollow — state never rides on color alone.
+		dot := ui.Box(c).Size(8, 8).Radius(4).Border(neoStrokeChip, k.Border)
+		if current {
+			dot.Background(k.Border)
+		}
+		ui.Text(c, sess.title).FontSize(12).SingleLine().Grow(1).MinWidth(0).
+			TextColor(k.Text)
+		if !sess.updated.IsZero() {
+			ui.Text(c, sess.updated.Format("Jan 2")).FontSize(10).Bold().
+				TextColor(k.TextMuted).SingleLine()
+		}
+	})
 }
 
 // content is the working pane: the thread, with the repo inspector sliding in
@@ -250,30 +269,47 @@ func (a *app) content(c *ui.Context, k tokensT) {
 	})
 }
 
-// statusbar is the strip along the bottom: workspace, branch, mode and
-// context on the left; a live dot on the right.
+// statusbar is the sticker strip along the bottom: workspace, branch and
+// mode as paper chips, the context window as the segmented meter, and the
+// live / changed state chips on the right.
 func (a *app) statusbar(c *ui.Context, k tokensT) {
-	layout.StatusBar(c, layout.StatusBarOptions{
-		Left: []layout.StatusItem{
-			{ID: "workspace", Text: fsutil.WorkspaceName(a.ws.root), Icon: icons.Must("folder")},
-			{ID: "branch", Text: a.repo.branch, Icon: icons.Must("git-branch")},
-			{ID: "mode", Text: modeName(a.thread.mode), Icon: icons.Must("brain")},
-			{ID: "ctx", Text: "6.4k / 8k tokens", Icon: icons.Must("sliders-horizontal")},
-		},
-		Right: []layout.StatusItem{
-			{ID: "live", Text: "live", Icon: icons.Must("circle"), Tone: layout.StatusItemSuccess},
-			{ID: "files", Text: "3 changed", Icon: icons.Must("file-text"), Tone: layout.StatusItemWarning},
-		},
+	ui.Column(c).Shrink(0).Children(func() {
+		ui.Box(c).FillWidth().Height(2).Background(k.Border)
+		ui.Row(c).FillWidth().Padding(5, 12).Gap(8).AlignItems(ui.Center).
+			Background(neoSidebarBG(k)).Children(func() {
+			neoChipBuild(c, k, k.Surface, func() {
+				ui.Icon(c, icons.Must("folder")).FontSize(12).TextColor(k.Text)
+				ui.Text(c, fsutil.WorkspaceName(a.ws.root)).FontSize(11).Bold().SingleLine()
+			})
+			neoChipBuild(c, k, k.Surface, func() {
+				ui.Icon(c, icons.Must("git-branch")).FontSize(12).TextColor(k.Text)
+				ui.Text(c, a.repo.branch).FontSize(11).Bold().SingleLine()
+			})
+			neoChipBuild(c, k, k.Surface, func() {
+				ui.Icon(c, icons.Must("brain")).FontSize(12).TextColor(k.Text)
+				ui.Text(c, strings.ToUpper(modeName(a.thread.mode))).Font(fontPixel).FontSize(8)
+			})
+			neoBlockMeter(c, k, 8, 10, k.Accent)
+			ui.Text(c, "6.4K/8K").Font(fontPixel).FontSize(8).TextColor(k.TextMuted)
+			ui.Spacer(c)
+			neoStatusDot(c, k, "live", k.Success)
+			neoChip(c, k, "3 changed", k.Warning)
+		})
 	})
 }
 
-// iconToggle is a small icon button that reports its click. tint lights
-// it when the associated state is on.
+// iconToggle is a small square sticker button: the ink outline, the 2px
+// hard shadow and the press-that-lands; tint lights it when the
+// associated state is on.
 func (a *app) iconToggle(c *ui.Context, k tokensT, icon, label string, fn func()) {
-	b := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(7).Center().Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(neoRadiusChip).Center().Cursor(ui.CursorPointer)
 	if b.Hovered() {
 		b.Background(k.SurfaceHover)
+	} else {
+		b.Background(k.Surface)
 	}
+	b.Border(neoStrokeChip, k.Border)
+	neoShadow(b, k, neoShadowBtn)
 	if b.Clicked() {
 		fn()
 	}

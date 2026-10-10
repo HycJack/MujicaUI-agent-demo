@@ -125,3 +125,127 @@ var (
 func neoSidebarBG(k tokensT) ui.Color {
 	return k.Background.Mix(k.Warning, 0.10)
 }
+
+// neoDotGrid paints the style sheet's dot grain — a radial ink dot on
+// a fixed pitch — as an element's own background. It draws under the
+// children of the element it is applied to, so hit testing is untouched
+// (the mygo-agent finding was about a window-sized absolute bitmap
+// layer, not a drawn background).
+func neoDotGrid(k tokensT, pitch, dot float32) func(*ui.Painter, ui.Rect) {
+	col := k.Border.Alpha(0.10)
+	return func(p *ui.Painter, r ui.Rect) {
+		for y := r.Y + pitch/2; y < r.Y+r.H; y += pitch {
+			for x := r.X + pitch/2; x < r.X+r.W; x += pitch {
+				p.Fill(ui.Rect{X: x - dot, Y: y - dot, W: dot * 2, H: dot * 2}, col, dot)
+			}
+		}
+	}
+}
+
+// neoStatusDot is the status sticker with the little ink eye: a
+// saturated face, the 1.5px outline, a dot and the pixel-caps label —
+// state reads as text, never as color alone.
+func neoStatusDot(c *ui.Context, k tokensT, label string, face ui.Color) {
+	neoChipBuild(c, k, face, func() {
+		ui.Box(c).Size(7, 7).Radius(3.5).Background(k.Border)
+		ui.Text(c, strings.ToUpper(label)).Font(fontPixel).FontSize(8).TextColor(k.Text)
+	})
+}
+
+// neoTag is the dashed sticker tag: a saturated face, the dashed ink
+// outline, tipped a few degrees like a decal slapped on the page.
+func neoTag(c *ui.Context, k tokensT, label string, face ui.Color, deg float32) {
+	t := ui.Row(c).AlignItems(ui.Center).Padding(4, 10).Radius(neoRadiusChip).
+		Background(face).Border(neoStrokeChip, k.Border).Rotate(deg)
+	t.BorderStyle(ui.BorderDashed).Children(func() {
+		ui.Text(c, strings.ToUpper(label)).Font(fontPixel).FontSize(8).TextColor(k.Text)
+	})
+}
+
+// neoBlockMeter is the segmented meter — the blood bar / battery gauge
+// that replaces a continuous progress bar: N outlined cells, filled
+// ones in the state color.
+func neoBlockMeter(c *ui.Context, k tokensT, filled, total int, on ui.Color) {
+	if total <= 0 {
+		return
+	}
+	ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
+		for i := 0; i < total; i++ {
+			cell := ui.Box(c).Size(10, 13).Radius(3).Border(neoStrokeChip, k.Border)
+			if i < filled {
+				cell.Background(on)
+			} else {
+				cell.Background(k.Surface)
+			}
+		}
+	})
+}
+
+// StatVM is one stat card's content.
+type StatVM struct {
+	Title      string // the pixel caps label, "CONTEXT"
+	Badge      string // optional state chip, "LIVE"
+	BadgeColor ui.Color
+	Big        string // the oversized pixel number, "6.4K"
+	Unit       string // beside the number, "of 8K"
+	Filled     int    // block meter
+	Total      int
+	Note       string // the footnote line
+}
+
+// neoStatCard is the score-screen's card: pixel label, a state chip,
+// the oversized number with its unit, the block meter, a footnote.
+func neoStatCard(c *ui.Context, k tokensT, st StatVM) {
+	neoCard(c, k, k.Surface, func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, strings.ToUpper(st.Title)).Font(fontPixel).FontSize(8).
+				TextColor(k.TextMuted).Grow(1)
+			if st.Badge != "" {
+				neoChip(c, k, st.Badge, st.BadgeColor)
+			}
+		})
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, st.Big).Font(fontPixel).FontSize(20).TextColor(k.Text)
+			if st.Unit != "" {
+				ui.Text(c, st.Unit).FontSize(11).Bold().TextColor(k.TextMuted)
+			}
+		})
+		neoBlockMeter(c, k, st.Filled, st.Total, k.Accent)
+		if st.Note != "" {
+			ui.Text(c, st.Note).FontSize(10.5).TextColor(k.TextMuted)
+		}
+	})
+}
+
+// neoTabs is the slot-machine selector over an int state: unselected
+// tabs are white cards with ink outlines, the selected one is the full
+// color block.
+func neoTabs(c *ui.Context, k tokensT, sel *int, names ...string) {
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		for i, name := range names {
+			i := i
+			on := i == *sel
+			tab := ui.ButtonBase(c).Label(name).Padding(3, 12).Radius(neoRadiusChip).
+				Border(neoStrokeChip, k.Border).Cursor(ui.CursorPointer)
+			if on {
+				tab.Background(k.Accent)
+			} else {
+				tab.Background(k.Surface)
+				if tab.Hovered() {
+					tab.Background(k.SurfaceHover)
+				}
+			}
+			neoShadow(tab, k, 1.5)
+			tab.Children(func() {
+				col := k.TextMuted
+				if on {
+					col = k.OnAccent
+				}
+				ui.Text(c, name).FontSize(11).Bold().TextColor(col)
+			})
+			if tab.Clicked() {
+				*sel = i
+			}
+		}
+	})
+}

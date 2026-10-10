@@ -235,6 +235,7 @@ type app struct {
 	// shell
 	navOpen     bool
 	paletteOpen bool
+	dotGrid     bool // the sticker sheet's dot grain (theme.json's dotGrid)
 	nextID      int
 }
 
@@ -246,6 +247,7 @@ func newApp() *app {
 		repo:        repo{branch: "main"},
 		settingsTab: "providers",
 		wsCursor:    -1,
+		dotGrid:     theDotGrain(),
 	}
 	a.llm = a.defaultSettings()
 	if p, err := store.SettingsPath(); err == nil {

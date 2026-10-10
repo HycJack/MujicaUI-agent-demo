@@ -12,14 +12,30 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// sheetEqual compares two token sheets field by field: the struct now
+// carries a *bool, so == would compare pointers, not the switch.
+func sheetEqual(a, b ThemeTokens) bool {
+	if a.Paper != b.Paper || a.Ink != b.Ink || a.Sky != b.Sky || a.Green != b.Green ||
+		a.Red != b.Red || a.Amber != b.Amber || a.Violet != b.Violet || a.Muted != b.Muted {
+		return false
+	}
+	if (a.DotGrain == nil) != (b.DotGrain == nil) {
+		return false
+	}
+	return a.DotGrain == nil || *a.DotGrain == *b.DotGrain
+}
+
 // TestThemeJSONMissing checks the no-file case is the built-in sheet.
 func TestThemeJSONMissing(t *testing.T) {
 	got := LoadThemeTokens(filepath.Join(t.TempDir(), "theme.json"))
-	if got != defaultTokens() {
+	if !sheetEqual(got, defaultTokens()) {
 		t.Errorf("missing file: got %+v, want defaults", got)
 	}
 	if got.Mix().Background != ui.Hex("#FDF6E8") {
 		t.Errorf("missing file: Background not the built-in paper")
+	}
+	if got.DotGrain == nil || !*got.DotGrain {
+		t.Errorf("missing file: the dot grain should ship on")
 	}
 }
 
@@ -30,7 +46,7 @@ func TestThemeJSONMalformed(t *testing.T) {
 	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := LoadThemeTokens(p); got != defaultTokens() {
+	if got := LoadThemeTokens(p); !sheetEqual(got, defaultTokens()) {
 		t.Errorf("malformed file: got %+v, want defaults", got)
 	}
 }

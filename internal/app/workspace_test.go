@@ -130,7 +130,7 @@ func TestWorkspaceTreeRender(t *testing.T) {
 	if !a.fdraw.open || !strings.Contains(a.fdraw.text, "workspace marker line") {
 		t.Fatalf("clicking the row did not open the drawer: open=%v text=%q", a.fdraw.open, a.fdraw.text)
 	}
-	if ui.Render(a.view, 1280, 820, 1) == nil {
+	if tst.Image() == nil {
 		t.Fatal("render nil with the drawer open")
 	}
 }
@@ -231,7 +231,7 @@ func TestTreeFileContextMenu(t *testing.T) {
 	if len(a.thread.ctx) != 1 || a.thread.ctx[0].Label != "hello.go" {
 		t.Fatalf("the context menu did not attach the file: %+v", a.thread.ctx)
 	}
-	if ui.Render(a.view, 1280, 820, 1) == nil {
+	if tst.Image() == nil {
 		t.Fatal("render nil with the attachment chip")
 	}
 }
@@ -252,7 +252,7 @@ func TestSidebarWorkspaceList(t *testing.T) {
 	a.restoreSession() // opens the current workspace's tree node, selects s1
 	tst := ui.NewTester(a.view, 1280, 820)
 	tst.Frame()
-	if !tst.HasText("Workspaces") {
+	if !tst.HasText("WORKSPACES") {
 		t.Fatal("the workspace list section is missing")
 	}
 	if !tst.HasText("Root session") {

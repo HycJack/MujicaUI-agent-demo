@@ -135,6 +135,7 @@ func (a *app) settingsDialogs(c *ui.Context) {
 		Title:       "Settings",
 		Description: "Configure the LLM backend and how Crux drives it. Values apply live and persist locally across restarts.",
 		Width:       780,
+		Decorated:   true, // the sticker sheet's double border + corner ornaments
 		Actions: func() {
 			if input.Button(c, "Done", input.ButtonOptions{}).Clicked() {
 				a.settingsOpen = false

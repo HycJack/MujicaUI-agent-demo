@@ -77,7 +77,10 @@ func TestMarkdownSelectableContainer(t *testing.T) {
 	if !tt.HasText("First paragraph.") || !tt.HasText("Second paragraph") || !tt.HasText("2") {
 		t.Fatalf("reply blocks missing: %q", tt.Texts())
 	}
-	if ui.Render(a.view, 1100, 760, 1) == nil {
+	// The nil-render check rides the tester's own frame: a second
+	// ui.Render context on the same app state would re-show the thread's
+	// ListState in a fresh frame counter and trip mygo's two-Lists guard.
+	if tt.Image() == nil {
 		t.Fatal("render nil")
 	}
 }

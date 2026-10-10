@@ -32,10 +32,15 @@ func (a *app) welcome(c *ui.Context, k tokensT) {
 	})
 }
 
-// welcomeHero is the greeting: the fat display voice for the salutation,
-// the pixel voice for the subtitle, and the sprite confetti around them.
+// welcomeHero is the greeting: the state badge and the dashed sticker
+// tag up top, the fat display voice for the salutation, the pixel voice
+// for the subtitle, and the sprite confetti around them.
 func (a *app) welcomeHero(c *ui.Context, k tokensT) {
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			neoStatusDot(c, k, "coding agent", k.Accent)
+			neoTag(c, k, "v0.3 ✦ sticker edition", k.Ornament, -3)
+		})
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, neoPixelSparkle).FontSize(14).TextColor(k.Ornament)
 			ui.Icon(c, neoPixelCloud).FontSize(18).TextColor(k.Accent)
@@ -45,6 +50,14 @@ func (a *app) welcomeHero(c *ui.Context, k tokensT) {
 		ui.Text(c, "Good evening").Font(fontDisplay).FontSize(36).TextColor(k.Text)
 		ui.Text(c, "CRUX IS CAUGHT UP ON THE REPO — WHAT SHOULD IT LOOK AT NEXT?").
 			Font(fontPixel).FontSize(8).TextColor(k.TextMuted)
+		neoStatCard(c, k, StatVM{
+			Title:  "context",
+			Badge:  "healthy",
+			Big:    "6.4K",
+			Unit:   "of 8K tokens",
+			Filled: 8, Total: 10,
+			Note: "The window before compaction kicks in.",
+		})
 	})
 }
 

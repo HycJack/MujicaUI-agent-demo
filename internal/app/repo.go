@@ -22,7 +22,7 @@ import (
 // with the (demo) version-control side.
 func (a *app) repoPane(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(380).Shrink(0).Background(k.Surface).Padding(12).Gap(10).Children(func() {
-		ui.Segmented(c, &a.repo.paneTab, "Workspace", "Repository").FillWidth()
+		neoTabs(c, k, &a.repo.paneTab, "Workspace", "Repository")
 		if a.repo.paneTab == 0 {
 			a.workspacePane(c, k)
 			return
@@ -145,7 +145,9 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 
 	ui.Text(c, "Changes").FontSize(11).TextColor(k.TextMuted)
 	cl := git.ChangesList(c, &a.repo.changes, v.files, git.ChangesListOptions{})
-	cl.Element.Height(96)
+	// Two group headers plus their rows must fit — a shorter box slices
+	// the second header mid-glyph at the card edge.
+	cl.Element.Height(136)
 	if action, path, ok := cl.Action(); ok {
 		a.vcsAction(action, path)
 	}
@@ -189,9 +191,9 @@ func (a *app) repositoryPane(c *ui.Context, k tokensT) {
 		a.iconToggle(c, k, "plus", "Attach to conversation", func() { c.Toast(a.attachFile(f.Path)) })
 	})
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Segmented(c, &a.repo.codeTab, "Diff", "Source").Width(160)
+		neoTabs(c, k, &a.repo.codeTab, "Diff", "Source")
 		if a.repo.codeTab == 1 && fsutil.Formattable(lang) {
-			ui.Segmented(c, &a.repo.srcFmt.tab, "Raw", "Fmt").Width(108)
+			neoTabs(c, k, &a.repo.srcFmt.tab, "Raw", "Fmt")
 		}
 	})
 	ui.Box(c).Grow(1).MinHeight(220).Clip().Children(func() {

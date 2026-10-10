@@ -165,7 +165,7 @@ UI（根目录 `package main`）；数据层与逻辑层**不 import 任何 UI �
 | --- | --- |
 | `app.go` | 引导 `Run()`：`store.Migrate()`、`newApp()`、`loadSettings()`、store 路径接线、窗口创建、`a.redraw = win.Update`、心跳 goroutine、`mygo.App.Run()`。 |
 | `state.go` | UI 状态模型：`app` / `thread` / `row`（含 `tools []*toolRun` 合并卡块）/ `repo`（含 `vcs`）/ `session` / `LLMSettings`（内嵌 `store.LLMConfig` + 瞬态字段）；`settingsOpen`/`settingsTab` 与 `closeModals`/`openProviders`/`openAgent`。**无种子数据**——首跑即空会话 + 欢迎页。 |
-| `shell.go` | 外壳布局：标题栏（含 Provider/Agent 设置入口与目录树直达按钮）、workspace→session 两级会话树（`sidebar`）、工作区、状态栏；快捷键。 |
+| `shell.go` | 外壳布局：标题栏（含天空色 "C" 贴纸徽标）、workspace→session 两级会话树（`sidebar`：当前会话 = 满天蓝色块 + 实心状态点，其余行空心点 + 右对齐日期）、工作区、**手绘贴纸状态栏**（纸色 chip + 上下文分段电量条 + LIVE/CHANGED 状态贴纸）；窗口根部点阵底纹（`a.dotGrid` 可关）；快捷键。 |
 | `thread.go` | 对话线程：`threadView`、`renderRow`（一条回复一个气泡：等待提示 + 思考/工具折叠块 + 可选中正文）、`actions`（复制/重新生成/时间）、`composer`、`regenerate`。 |
 | `llm.go` | **引擎适配器**：`engineConfig()`（设置 → engine.Config 投影）、`historyMessages()`（行 → engine.Message）、`send`（附件折叠）、`startStream`（goroutine 跑 `engine.Run`，回调经 `a.redraw` 落回行状态：思考/文本增量刷新当前行，`appendTurnTool` 进该行的卡片块）、`finishToolRow`/`streamError`/中止处理。 |
 | `persist.go` | **持久化胶水**：行 ↔ `store.Message` 转换（`storeMsg`/`loadMsg`，role/kind/mode 映射）、`persistSessions`（索引 + 脏标记转录增量写）、`loadSessions`/`loadTranscript`（懒加载）、`saveWsPrefs`/`loadWsPrefs`、`loadSettings`/`saveSettings`（写后快照 `savedSettings` 供脏检查）、`newThread`/`openSession`/`saveSession`/`openWorkspace`/`restoreSession`。 |
@@ -180,7 +180,7 @@ UI（根目录 `package main`）；数据层与逻辑层**不 import 任何 UI �
 | `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`（每帧装 neo 贴纸 sheet，亮/暗同纸）、`tokensT` 别名。 |
 | `neo.go` | 贴纸组件套件：`neoCard`（2px 墨描边 + 4px 硬阴影 + 14px 圆角）、`neoChip`（像素大写状态贴纸）、`neoButton`（按压落影）、像素精灵、`neoSidebarBG`。颜色全部读令牌。 |
 | `neofonts.go` | 内嵌 Bungee / Press Start 2P（OFL 许可证随附），`registerFonts()` 启动时注册一次；`fontPixel`/`fontDisplay` 家族名。 |
-| `themejson.go` | **换肤口**：`~/.crux-agent/theme.json` 覆盖 8 个色值（缺文件/坏文件回退内置 sheet）；`LoadThemeTokens` → `Mix()` 摊开成 `theme.Tokens`；进程启动读一次（`theSheet`），换肤改文件后重启生效。 |
+| `themejson.go` | **换肤口**：`~/.crux-agent/theme.json` 覆盖 8 个色值 + `dotGrid` 点阵开关（缺文件/坏文件回退内置 sheet）；`LoadThemeTokens` → `Mix()` 摊开成 `theme.Tokens`；进程启动读一次（`theSheet`/`theDotGrain`），换肤改文件后重启生效。 |
 | `commands.go` | ⌘K 命令面板与 `runCommand`（含 providers / agent / workspace / reload-workspace 命令）。 |
 | `*_test.go` | UI 层测试（见 §14）；`internal/store`、`internal/engine`、`internal/md` 各有自己的包内测试。 |
 | `mygo.json` | 打包元数据。 |
