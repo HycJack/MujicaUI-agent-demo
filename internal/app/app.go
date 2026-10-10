@@ -17,6 +17,7 @@ import (
 // open the window and pump the event loop. It returns when the window
 // closes.
 func Run() error {
+	registerFonts()
 	store.Migrate() // pull an older store (%AppData% / ~/.mujicaui-agent-demo) into ~/.crux-agent once
 	a := newApp()
 	a.loadSettings() // restore the persisted LLM backend, if any

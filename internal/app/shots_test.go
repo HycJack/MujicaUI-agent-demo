@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -36,6 +37,7 @@ func moduleRoot() string {
 }
 
 func TestScreenshots(t *testing.T) {
+	registerFonts() // the sticker sheet's display faces must be in the shots
 	dir := os.Getenv("MYGO_UI_SHOTS")
 	if dir == "" {
 		t.Skip("set MYGO_UI_SHOTS to a directory to write the UI screenshots")
@@ -50,6 +52,10 @@ func TestScreenshots(t *testing.T) {
 	shot := func(name string, a *app) {
 		t.Helper()
 		tt := ui.NewTester(a.view, 1280, 820)
+		tt.Frame()
+		// Overlays fade in over PopupDuration; sleep past it and repaint
+		// so dialogs and the palette don't freeze mid-fade, translucent.
+		time.Sleep(220 * time.Millisecond)
 		tt.Frame()
 		img := tt.Image()
 		if img == nil {

@@ -63,13 +63,21 @@ func (a *app) shortcuts(c *ui.Context) {
 	}
 }
 
-// titlebar is the window's top row: the mark and name, a sidebar toggle,
-// then the model and the inspector toggle.
+// titlebar is the window's top row: the sticker mark and name, a sidebar
+// toggle, then the model and the inspector toggle.
 func (a *app) titlebar(c *ui.Context, k tokensT) {
 	layout.TitleBar(c, "Crux", layout.TitleBarOptions{
 		Leading: func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.Must("bot")).FontSize(16).TextColor(k.Accent)
+				// The mark is the app's sticker: a sky block with the
+				// ink outline and hard shadow, the name in the display
+				// face.
+				mark := ui.Box(c).Size(26, 26).Radius(neoRadiusChip).Center().
+					Background(k.Accent).Border(neoStrokeCard, k.Border)
+				mark.Shadow(neoShadowBtn, neoShadowBtn, 0, 0, k.Border)
+				mark.Children(func() {
+					ui.Text(c, "C").Font(fontDisplay).FontSize(12).TextColor(k.OnAccent)
+				})
 				ui.Text(c, "Crux").FontSize(14).Bold()
 				a.iconToggle(c, k, "menu", "Toggle sessions", func() { a.navOpen = !a.navOpen })
 			})
@@ -95,7 +103,7 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 // Clicking a workspace toggles it open; clicking a session opens it (and
 // switches workspace first when it belongs elsewhere).
 func (a *app) sidebar(c *ui.Context, k tokensT) {
-	ui.Column(c).Width(260).Shrink(0).Background(k.Surface).Padding(10, 10, 10).Gap(8).Children(func() {
+	ui.Column(c).Width(260).Shrink(0).Background(neoSidebarBG(k)).Padding(10, 10, 10).Gap(8).Children(func() {
 		newBtn := ui.PrimaryButton(c, "New chat").FillWidth()
 		if newBtn.Clicked() {
 			a.newThread()
