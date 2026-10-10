@@ -57,6 +57,13 @@ type Callbacks struct {
 	OnText      func(text string)
 	OnToolStart func(callID, name, args string)
 	OnToolEnd   func(callID, result string, isErr bool, dur time.Duration)
+	// OnSession reports a backend's session id worth persisting so the
+	// next turn resumes it (the claude init event). The builtin loop
+	// never fires it.
+	OnSession func(sessionID string)
+	// OnNote reports a one-line note for the reply's timeline (compact
+	// notices, turn summaries). The builtin loop never fires it.
+	OnNote func(text string)
 }
 
 // Run executes the agent loop to completion and folds its events into cb.
