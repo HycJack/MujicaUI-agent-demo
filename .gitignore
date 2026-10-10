@@ -9,3 +9,6 @@ crux-agent
 .v2c/
 .video_agent/
 *.test
+
+# packaged builds
+bin/
