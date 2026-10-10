@@ -20,6 +20,13 @@ type LLMConfig struct {
 	BaseURL      string `json:"baseUrl,omitempty"`
 	SystemPrompt string `json:"systemPrompt"`
 	Thinking     string `json:"thinking"`
+	// Backend selects the agent kind: "" (the pre-field default) and
+	// "builtin" drive the built-in LLM loop; "claude" drives the Claude
+	// Code CLI. A file from before the field exists loads as "".
+	Backend string `json:"backend,omitempty"`
+	// Mode is the three-level approval selector ("read-only" / "agent" /
+	// "full"); "" loads as the agent default.
+	Mode string `json:"mode,omitempty"`
 }
 
 // LoadSettings reads the settings file; a missing file returns the zero

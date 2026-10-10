@@ -80,8 +80,12 @@ type Message struct {
 
 // Transcript is one session's transcript file.
 type Transcript struct {
-	Mode Mode      `json:"mode,omitempty"`
-	Rows []Message `json:"rows"`
+	Mode Mode `json:"mode,omitempty"`
+	// ClaudeID is the session id the claude backend reported (its init
+	// event); the next turn rides --resume with it. Empty for builtin
+	// sessions and files from before the field existed.
+	ClaudeID string    `json:"claudeID,omitempty"`
+	Rows     []Message `json:"rows"`
 }
 
 // SessionMeta is one entry of the session index.
