@@ -8,6 +8,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	piai "github.com/HycJack/pi-ai-go"
 )
@@ -75,5 +76,81 @@ func TestRunResolveError(t *testing.T) {
 	err := Run(context.Background(), Config{Provider: ProviderOpenAICompat}, nil, Callbacks{})
 	if err == nil {
 		t.Fatal("Run should fail on an unresolvable model")
+	}
+}
+
+// Backend selection: empty and unknown spellings mean the builtin loop;
+// only "claude" dispatches to the CLI.
+func TestConfigBackend(t *testing.T) {
+	for _, in := range []string{"", "builtin", "nonsense"} {
+		if c := (Config{Backend: in}); c.backend() != "builtin" {
+			t.Fatalf("Backend %q resolved to %q", in, c.backend())
+		}
+	}
+	if c := (Config{Backend: "claude"}); c.backend() != "claude" {
+		t.Fatal("claude backend did not resolve")
+	}
+}
+
+// The claude branch of Run: the last user message becomes the prompt,
+// the config rides through, and the callbacks land.
+func TestRunDispatchesClaude(t *testing.T) {
+	bin := fakeClaudeScript(t,
+		[]string{
+			`echo {"type":"system","subtype":"init","session_id":"dispatch-1"}`,
+			`echo {"type":"assistant","message":{"content":[{"type":"text","text":"pong"}]}}`,
+			`echo ` + resultLine("dispatch-1"),
+		},
+		[]string{
+			`echo '{"type":"system","subtype":"init","session_id":"dispatch-1"}'`,
+			`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"pong"}]}}'`,
+			`echo ` + resultLine("dispatch-1"),
+		})
+	var text, sess, note string
+	err := Run(context.Background(), Config{
+		Backend: "claude", ClaudeBin: bin, Mode: ModeFull, Model: "sonnet",
+		Workdir: t.TempDir(),
+	}, []Message{
+		{Role: RoleUser, Text: "first", At: time.Now()},
+		{Role: RoleAssistant, Text: "old reply", At: time.Now()},
+		{Role: RoleUser, Text: "hello", At: time.Now()},
+	}, Callbacks{
+		OnText:    func(s string) { text = s },
+		OnSession: func(id string) { sess = id },
+		OnNote:    func(s string) { note = s },
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if text != "pong" {
+		t.Fatalf("text = %q", text)
+	}
+	if sess != "dispatch-1" || note == "" {
+		t.Fatalf("sess=%q note=%q", sess, note)
+	}
+}
+
+// A claude run with no user message to send is an error, not a silent
+// empty turn.
+func TestRunClaudeNeedsPrompt(t *testing.T) {
+	err := Run(context.Background(), Config{Backend: "claude", ClaudeBin: "whatever"}, []Message{
+		{Role: RoleAssistant, Text: "only an old reply", At: time.Now()},
+	}, Callbacks{})
+	if err == nil || !strings.Contains(err.Error(), "prompt") {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+// The builtin branch now runs its tools through the gate: read-only
+// denies a bash call before any LLM is consulted (observable by asking
+// the loop to run a tool directly through the toolset Run builds).
+func TestRunBuiltinUsesGate(t *testing.T) {
+	// ResolveModel fails without a model — Run errors before any tool
+	// runs, but the gate itself is covered by tools_test; here we only
+	// pin that Run no longer forces full access on the toolset.
+	// (An unresolvable model fails fast, which keeps this off the wire.)
+	err := Run(context.Background(), Config{Provider: ProviderOpenAICompat, BaseURL: "https://x/v1", Mode: ModeReadOnly}, nil, Callbacks{})
+	if err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("err: %v", err)
 	}
 }

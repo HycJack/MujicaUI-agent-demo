@@ -21,7 +21,9 @@ import (
 const ProviderOpenAICompat = "openai-compatible"
 
 // Config carries everything the loop needs from the settings: which backend
-// to call, how to steer it, and where the tools operate.
+// to call, how to steer it, and where the tools operate. The Backend field
+// selects the loop kind (spec §4.4): "" or "builtin" drive the pi-ai agent
+// loop with the gated toolset; "claude" drives the Claude Code CLI.
 type Config struct {
 	Provider     string
 	Model        string
@@ -30,6 +32,22 @@ type Config struct {
 	SystemPrompt string
 	Thinking     string // "" / none / low / medium / high / xhigh
 	Workdir      string // the tools' root and the exec environment's dir
+
+	Backend         string        // "" | "builtin" | "claude"
+	Mode            Mode          // three-level approval selector (spec §2)
+	OnApproval      ApprovalFunc  // nil → an ask settles as a denial
+	ApprovalTimeout time.Duration // 0 → DefaultApprovalTimeout
+	ClaudeBin       string        // resolved claude CLI path (tests: a fake)
+	ClaudeSessionID string        // --resume
+}
+
+// backend is the resolved loop kind: only "claude" dispatches to the CLI,
+// everything else (including typos) stays on the builtin loop.
+func (c Config) backend() string {
+	if c.Backend == "claude" {
+		return "claude"
+	}
+	return "builtin"
 }
 
 // Role says who a history message came from.
@@ -66,11 +84,27 @@ type Callbacks struct {
 	OnNote func(text string)
 }
 
-// Run executes the agent loop to completion and folds its events into cb.
-// It blocks; the caller runs it on a goroutine. A model-resolution failure
+// Run executes one turn on the selected backend and folds its events into
+// cb. It blocks; the caller runs it on a goroutine. A model-resolution failure
 // or a stream error returns as an error (a context cancellation returns
 // the loop's own error, which the caller filters by ctx.Err()).
 func Run(ctx context.Context, cfg Config, history []Message, cb Callbacks) error {
+	if cfg.backend() == "claude" {
+		prompt, ok := lastUserMessage(history)
+		if !ok {
+			return fmt.Errorf("claude: nothing to send — the prompt is empty")
+		}
+		return RunClaude(ctx, ClaudeConfig{
+			Bin:             cfg.ClaudeBin,
+			Model:           cfg.Model,
+			SystemPrompt:    cfg.SystemPrompt,
+			Mode:            cfg.Mode,
+			SessionID:       cfg.ClaudeSessionID,
+			Workdir:         cfg.Workdir,
+			ApprovalTimeout: cfg.ApprovalTimeout,
+			OnApproval:      cfg.OnApproval,
+		}, prompt, cb)
+	}
 	model, err := ResolveModel(cfg)
 	if err != nil {
 		return err
@@ -88,9 +122,14 @@ func Run(ctx context.Context, cfg Config, history []Message, cb Callbacks) error
 		}
 	}
 	loopCfg := agent.AgentLoopConfig{
-		Model:               model,
-		SystemPrompt:        cfg.SystemPrompt,
-		Tools:               Tools(cfg.Workdir, Gate{Mode: ModeFull}),
+		Model:        model,
+		SystemPrompt: cfg.SystemPrompt,
+		Tools: Tools(cfg.Workdir, Gate{
+			Mode:            cfg.Mode,
+			Sandbox:         NewSandbox(),
+			OnApproval:      cfg.OnApproval,
+			ApprovalTimeout: cfg.ApprovalTimeout,
+		}),
 		ToolExecution:       core.ToolExecSequential,
 		ExecEnv:             core.NewDefaultExecutionEnvWithDir(cfg.Workdir),
 		SimpleStreamOptions: streamOptions(cfg),
@@ -177,6 +216,18 @@ func ThinkDefault(provider, model string) string {
 		return "none"
 	}
 	return string(piai.ThinkingMedium)
+}
+
+// lastUserMessage finds the newest user message: the claude backend's
+// turn prompt. The CLI keeps its own history (--resume); Crux only sends
+// what the user just typed.
+func lastUserMessage(history []Message) (string, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == RoleUser {
+			return history[i].Text, true
+		}
+	}
+	return "", false
 }
 
 // streamOptions builds the streaming options: the API key and the reasoning

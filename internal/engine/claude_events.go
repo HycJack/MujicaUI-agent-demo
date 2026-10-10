@@ -213,6 +213,11 @@ func (r *claudeRun) handle(line string) {
 		}
 
 	case "result":
+		// A run that somehow skipped its init frame still gets its
+		// session named: the result event carries session_id too.
+		if ev.SessionID != "" && r.session == "" {
+			r.session = ev.SessionID
+		}
 		verb := "Done"
 		if ev.IsError || ev.Subtype != "success" {
 			verb = "Stopped"
