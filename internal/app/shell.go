@@ -40,6 +40,7 @@ func (a *app) view(c *ui.Context) {
 	})
 	a.settingsDialogs(c)
 	a.workspaceDialog(c)
+	a.attachDialog(c)
 	a.fileDrawerView(c)
 	a.shortcuts(c)
 	a.palette(c)

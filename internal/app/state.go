@@ -227,6 +227,9 @@ type app struct {
 	wsDialogOpen bool     // the Open-workspace dialog
 	wsPathField  string   // the dialog's directory input
 	wsCursor     int      // the file tree's selected row (-1 = none)
+	attachOpen   bool     // the attach-file dialog
+	attachQuery  string   // the dialog's filter field
+	attachFiles  []string // the workspace's files, collected when it opens
 
 	// shell
 	navOpen     bool
@@ -260,8 +263,10 @@ func newApp() *app {
 	return a
 }
 
-// closeModals closes the Settings and workspace dialogs.
-func (a *app) closeModals() { a.settingsOpen, a.wsDialogOpen = false, false }
+// closeModals closes the Settings, workspace and attach dialogs.
+func (a *app) closeModals() {
+	a.settingsOpen, a.wsDialogOpen, a.attachOpen = false, false, false
+}
 
 // openProviders opens the Settings dialog on the Providers pane.
 func (a *app) openProviders() { a.settingsTab, a.settingsOpen = "providers", true }

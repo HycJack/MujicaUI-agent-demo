@@ -1,5 +1,7 @@
 github.com/HycJack/MujicaUI v0.0.0-20261010161305-8ca94854770e h1:8loEH2YOIdPOIJEvxN/UUuLp6PzqhgmdAvAPiWRGGQg=
 github.com/HycJack/MujicaUI v0.0.0-20261010161305-8ca94854770e/go.mod h1:g943BIZwVbjjhJ1n+BSvtXhMgiCWIRq0HSjdQLrFcps=
+github.com/HycJack/MujicaUI v0.0.0-20261010164319-e77ebee010af h1:q0OhCASRxedgIzguWziJrYNZsg03xuwgLB8dwOBPEOY=
+github.com/HycJack/MujicaUI v0.0.0-20261010164319-e77ebee010af/go.mod h1:g943BIZwVbjjhJ1n+BSvtXhMgiCWIRq0HSjdQLrFcps=
 github.com/HycJack/pi-ai-go v0.3.0 h1:gylrlIQUNLY5ftJQfX+z06oxHKot4DrNfD1Ucxin6+Q=
 github.com/HycJack/pi-ai-go v0.3.0/go.mod h1:0Ynl6bGVcLqPJ8deu5exjOr/c/SM8cYSKTWHumU4+aE=
 github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6XeQ/0=
