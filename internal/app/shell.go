@@ -110,17 +110,6 @@ func (a *app) sidebar(c *ui.Context, k tokensT) {
 		})
 		restore()
 		e.Grow(1).MinHeight(0)
-		b := ui.ButtonBase(c).Label("workspace-open-row").FillWidth().Padding(8).Radius(7).Gap(8).Cursor(ui.CursorPointer)
-		if b.Hovered() {
-			b.Background(k.SurfaceHover)
-		}
-		if b.Clicked() {
-			a.openWsDialog()
-		}
-		b.Children(func() {
-			ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
-			ui.Text(c, "Open workspace…").FontSize(12).TextColor(k.TextMuted)
-		})
 	})
 }
 
