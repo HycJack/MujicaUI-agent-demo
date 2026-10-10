@@ -302,3 +302,26 @@ README.md / SPEC.md                特性、三档语义表、限制(切后端/�
 | 审批回调死锁(UI 不回、卡挂着) | 引擎侧 10 分钟硬超时 + cancel 路径拒绝;唯一待决卡,新请求排队语义 = 顺序执行(工具本就串行) |
 | LookPath 找不到 claude(native 安装路径不同) | 启动时与设置页检测并显示;错误文案给出装法 |
 | 会话中途切后端历史断层 | claudeID 为空时全新会话;README/SPEC 注明 |
+
+## 11. 实现记录(落地时补充)
+
+与 §5.4/§7 的两处**有意简化**(计划已含,此处为实施确认):
+
+1. **不移植 UnifiedDiff**:claude 的 Edit/Write 直接把
+   `old_string/new_string`(或 `content`)喂给 `agent.FileChange` 的
+   Old/New——`FileChangeCard` 本来就吃新旧两份文本,参考实现里那套
+   mygo `UnifiedDiff` 统一 diff 解析器不需要。
+2. **不做 `--add-dir` 审批**:参考的 "workdir 之外目录加进 claude" 控制流
+   整个砍掉,不在范围内。
+
+落地时新增的三个**实现裁决**(测试钉死):
+
+- **stdin 行尾 = CRLF**:`\n` 会让严格按 `\r\n` 断行的读取器吃不到
+  user 行(cmd 的 `set /p` 实测),而 CRLF 对 readline / `\n`-split +
+  `JSON.parse` 都无害——选了对所有解析器都安全的一侧。
+- **Windows 取消即整树击杀**:`ProcGroupAttr` 里挂
+  `cmd.Cancel = terminateTree`(taskkill /T /F)+ `WaitDelay`。只杀
+  .cmd leader 会留下攥着 stdout 管道的 node 子进程,`Wait` 挂 9 秒
+  (进程级测试实测)。
+- **result 事件兜底会话名**:init 帧缺席时 result 的 `session_id`
+  也补进 note 的会话标签(init 仍是对 `OnSession` 的唯一来源)。

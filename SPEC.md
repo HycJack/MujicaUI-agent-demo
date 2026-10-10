@@ -464,8 +464,8 @@ Column (Fill, Background)
 
 ### 7.2 工具集（`internal/engine/tools.go`）
 
-三个工具，全部以**当前工作区为根**真实执行（无审批闸门——本应用定位是个人
-agent 控制台；输出与内容都有上限防止刷爆上下文）：
+三个工具，全部以**当前工作区为根**真实执行，并全部经过**权限三档门**
+（§7.2.1）——门决定放行 / 拒绝 / 出审批卡；输出与内容都有上限防止刷爆上下文：
 
 | 工具 | 行为 | 卡片 |
 | --- | --- | --- |
@@ -481,6 +481,34 @@ system-prompt.expected.md`）——身份两行 + 逐条规则，**只保留映�
 （glob/grep/后台任务/web_search/goal/workflow/subagent/present/@-路径引用）整行
 丢弃，不保留会诱导模型调用不存在工具的指引。加载升级：存的是**旧默认逐字
 原文**（`legacySystemPrompt`）则替换为新默认；自定义提示词原样保留。
+
+### 7.2.1 权限三档门与审批卡（`gate.go` / `tools.go` / `approval.go`）
+
+DSH 风格的三级权限模式是**唯一的审批开关**，由 composer 底部的
+`ui.Segmented`（Read-only / Agent / Full access）选择，存进
+`settings.json` 的 `mode` 字段；`engine.ParseMode` 把落盘字符串解析成
+`Mode`（空 = agent 默认，拼错 = read-only——**拼写错误不是权限**）：
+
+| 模式 | bash | write_file | read_file |
+| --- | --- | --- | --- |
+| **Read-only** | 拒绝 | 拒绝 | 放行 |
+| **Agent** | 沙箱可用→入沙箱；沙箱不可用→出审批卡 | 限定工作区内 | 放行（凭据目录拒绝） |
+| **Full access** | 放行 | 放行 | 放行 |
+
+- **门表**（`gateResolve`）：未知工具一律拒绝；`gatedBash` 按模式分派，
+  `gatedWrite` 做 `withinWorkdir` 路径收束，`gatedRead` 做凭据目录
+  （`.ssh` / `.aws` / `.gnupg` / `.kube` / `.docker` / `.config/gh` /
+  `.netrc`）拒绝。
+- **沙箱层**（`sandbox.go`）：macOS = seatbelt profile、Linux = bubblewrap，
+  均为一次性 `Command(ctx, name, args...)` 包装（边界 = 工作区 + 临时
+  scratch + 断网）；**Windows 无 OS 级沙箱**（`Available()==false`），
+  Agent 模式下的 bash 落到**逐条审批卡**——卡就是边界。
+- **审批卡**（`approval.go`）：`ApprovalFunc` 桥（`a.awaitApproval`）把
+  引擎的 ask 变成挂在当前 streaming 行上的卡片（工具名 + 已脱敏的单行
+  摘要 + Allow once / Always allow / Deny）。决策写回引擎的
+  **缓冲 (1) 通道**——晚到的答案不是答案；10 分钟未决 = 超时拒绝。
+  "Always allow" 等同 Allow once（**不持久化任何按工具放行规则**）。
+  停止回复 / 回复结束会连同卡片一起清掉待决请求。
 
 ### 7.1.1 Settings 模态框（Providers / Agent）
 
@@ -687,9 +715,43 @@ Column(Gap 8)
 │   })  → Submitted() 也触发 send
 │       （chat/agent 模式选择器已移除——Crux 固定 Agent 模式）
 └── Row(Wrap)
-    ├── 后端标签（Agent 设置页设定）
+    ├── ui.Segmented("Read-only / Agent / Full access")   权限三档（§7.2.1）
+    │       ——忙时（Busy）冻结不改值；选择即落盘 settings.mode
+    ├── 后端标签（Agent 设置页设定；claude 后端 = "claude · 别名"）
     └── chat.TokenCounter(6400, 8000)
 ```
+
+### 7.6 Claude Code 后端（`internal/engine/claude*.go`）
+
+Settings → Providers 的 **Agent type** 分段选择器把 Crux 变成 Claude Code
+CLI 的桌面壳：选 "Claude Code CLI" 后表单换成 CLI 探测行
+（`exec.LookPath` + 按需 `claude --version` 探针 goroutine）、模型别名输入
+（空 = CLI 默认）与"CLI 自己登录"的注记。`engine.Config.Backend`
+（`"builtin"` / `"claude"`）派发 `engine.Run`：
+
+- **spawn**：`claude -p --output-format stream-json --verbose
+  --input-format stream-json --include-partial-messages
+  --permission-mode default|bypassPermissions [--model 别名]
+  [--resume 会话] [--append-system-prompt 提示词]`；prompt 是 stdin 上的
+  一行 user JSON（**CRLF 行尾**——任何行读取器都兼容）；审批由
+  `can_use_tool` control_request 走 `control_response`
+  （allow + updatedInput 回显 / deny + 原因）。`result` 事件收尾但 CLI
+  常驻 → 断扫描、关 stdin、`Reap` 兜底杀树。
+- **事件**（`claude_events.go`）：init→`OnSession`（存进转录的
+  `claudeID`，下一轮 `--resume`）；stream_event 文本增量→`OnText`
+  （后缀去重防 partial/complete 重复）；tool_use→`OnToolStart`
+  （**Bash/Edit/Write/Read 工具名映射**到 bash/write_file/read_file
+  卡片体系；Edit/Write 的 FileChange 数据从 args 取
+  old_string/new_string/content）；tool_result→`OnToolEnd`；
+  result→`OnNote`（耗时 · 费用 · token · 会话号一行，挂在回复行尾，
+  不持久化）；compact 边界→`OnNote`（压缩通知）。
+- **终止语义**：ctx 取消且已见过事件 = 正常结束；取消且一个事件都没见
+  = "stopped before it answered"；Windows 下取消走 **taskkill /T /F
+  整树击杀**（npm 装的 claude 是 .cmd 包装，只杀 leader 会留下攥着
+  stdout 管道的 node 子进程）。
+- **会话衔接**：一轮 = 最后一条用户消息整句重发（CLI 自持历史）；
+  转录存 `claudeID` 跨轮 resume；**regenerate = 删回复行重发**（CLI 侧
+  历史无从对齐，文档化的取舍）；中途切换后端 = 新的 claude 会话。
 
 ---
 
@@ -1058,6 +1120,28 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    （不覆盖新文件、旧目录保留）；settings / workspace / 会话索引 + 每会话转录的
    落盘往返与损坏回退；旧单文件索引一次性拆分（转录落盘、索引去 rows、原文件留
    `.bak`、二次运行幂等）；转录路径 id 消毒防目录逃逸。
+ 18. **权限门 / 沙箱 / Claude 后端**（`internal/engine`）—— `gate_test.go`
+    （模式解析、门表全分支、nil/超时审批失败关闭）；`sandbox_test.go`
+    （边界构造、凭据目录拒绝、平台可用性）；`tools_test.go`（三档分派、
+    工作区收束、fake 沙箱执行 HOME=scratch）；`cliproc_test.go`（Reap 杀
+    lingerer、脱敏、截断）；`claude_events_test.go`（15 个行级事件测试）；
+    `claude_proc_test.go`（**进程级** fake CLI——Windows .cmd / Unix .sh，
+    真实 spawn：标志位、prompt-on-stdin、审批 wire 往返、常驻 CLI 收割、
+    取消终止、stderr 错误尾）；`claude_live_test.go`（**真实 CLI 冒烟**，
+    `CRUX_LIVE_CLAUDE=1` 开启，否则跳过）。
+ 19. **`TestProvidersPaneAgentTypeSwitch` / `TestClaudePaneContent` /
+    `TestBackendLabelClaude` / `TestDetectClaudeHeadless`**
+    （`settings_claude_test.go`）—— Agent type 分段切换换表单（API key
+    消失、CLI 探测行出现、切回还原）；claude 表单内容；后端标签跟随；
+    headless 探测不 panic。
+ 20. **`TestComposerModeSelector` / `TestApprovalCardAllow` /
+    `TestApprovalCardDeny` / `TestAwaitApprovalHeadless` /
+    `TestAwaitApprovalBridge` / `TestClaudeToolNameMapping` /
+    `TestEngineConfigCarriesGate` / `TestClaudeIDPersists`**
+    （`approval_test.go`）—— composer 模式选择器（切换落值、忙时冻结）；
+    审批卡生命周期（渲染、点击落定通道、拒绝带原因）；headless 桥
+    （无 redraw 上下文触发即拒绝）；claude 工具名映射与 Edit/Write 从
+    args 重建 FileChange；engineConfig 携带门全量；claudeID 转录往返。
 
 ---
 
@@ -1068,8 +1152,13 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 - Agent 走 pi-ai-go 的 **agent 循环**（多轮 + 工具执行）；跨轮历史由
   `historyMessages()` 从对话行重建（仅 user/assistant 文本行），工具调用与结果
   不回灌到下一轮的 LLM 历史（每轮工具上下文在循环内部完整，跨 send 丢失）。
-- 工具直接作用于真实文件系统（bash 可执行任意命令），**无审批/沙箱闸门**；
-  输出 8 KiB、读文件 64 KiB 截断是仅有的护栏。
+- 工具经**权限三档门**（§7.2.1）：macOS / Linux 有 OS 沙箱，**Windows 无**——
+  Agent 档下 bash 走逐条审批卡（卡即边界）；"Always allow" 不持久化
+  （等同 Allow once）；审批 10 分钟未决即拒绝。
+- **Claude 后端**：一轮 = 最后一条用户消息整句重发（CLI 自持历史，
+  `claudeID` 跨轮 resume）；**regenerate = 删回复行重发**，CLI 侧已发生的
+  侧效不回滚；中途切换后端 = 新 claude 会话；回复行尾的 note（费用 /
+  会话号 / 压缩通知）不持久化。
 - 配置持久化到家目录 `~/.crux-agent/settings.json`（含 API Key 明文，
   文件 0600 / 目录 0700，对话框打开期间实时写盘）；API Key 也可留空走 Provider
   的环境变量。
@@ -1104,6 +1193,7 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
   `internal/lsp` JSON-RPC 会话管理）。
 - 借助 `core.Settings{Light/Dark}` 做运行时亮暗切换按钮。
 - 用 `chat.ConversationSearch` 给会话栏加搜索，`chat.ConversationItem` 支持重命名/置顶/删除。
-- 工具审批闸门（`BeforeToolCall` 钩子 + 权限弹窗）、工具结果回灌跨轮历史、
-  `EventToolExecUpdate` 流式输出、更多工具（list_dir / grep / edit 补丁式修改）。
+- 工具结果回灌跨轮历史、`EventToolExecUpdate` 流式输出、更多工具
+  （list_dir / grep / edit 补丁式修改）、审批卡按工具 / 按会话的持久化
+  放行规则、Windows OS 级沙箱接入。
 - 将 API Key 迁移到系统 Keychain / 加密存储（当前为明文 JSON）。

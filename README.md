@@ -46,6 +46,19 @@ Codex 风格的编码 Agent 桌面应用：用 MyGo 原生 GPU 自绘 UI 工具�
   评审卡），正文流式输出、完成后按 **可选中 Markdown 渲染**（标题 / 有序列表 /
   表格 / 代码块，全部支持鼠标拖选复制）；每条消息带**复制按钮与时间**，助理回复
   可**一键重新生成**；无窗口（测试）环境下同步落定占位回复，保持确定性。
+- **权限三档门（DSH 风格）** —— composer 底部的 **Read-only / Agent /
+  Full access** 选择器就是审批开关：只读档拒绝一切写入与命令；Agent 档命令进
+  OS 沙箱（macOS seatbelt / Linux bubblewrap；**Windows 无 OS 沙箱时退化为
+  逐条审批卡**——卡即边界），写入收束在工作区内，凭据目录（`.ssh` / `.aws` /
+  `.gnupg` / `.kube` 等）永远拒绝读取；需要放行时时间线上弹出**权限卡**
+  （Allow once / Always allow / Deny，10 分钟未决即拒绝）。
+- **Claude Code 后端** —— Settings → Providers 的 **Agent type** 切到
+  "Claude Code CLI"，Crux 就变成 Claude Code 的原生桌面壳：spawn 真实
+  `claude` CLI（stream-json 双向流），工具调用走 `can_use_tool` 审批
+  （与三档门联动：Agent 档 = 命中审批卡、Full 档 = bypassPermissions），
+  Bash/Edit/Write/Read 映射成 Crux 的终端卡 / Diff 评审卡，会话 id 落盘
+  跨轮 `--resume`，回复行尾标注耗时 / 费用 / 会话号。安装：
+  `npm i -g @anthropic-ai/claude-code` 并 `claude login` 一次即可。
 - **Workspace 工作区** —— 默认打开**用户主目录**（不跟随 exe 所在目录）；标题栏
   `folder` 按钮**直达右侧目录树面板**；Workspace 标签浏览真实目录（懒加载展开、
   目录优先排序、跳过 `.git` / `node_modules` 等噪音）；**点击文件滑出右侧大抽屉**
@@ -73,9 +86,11 @@ Codex 风格的编码 Agent 桌面应用：用 MyGo 原生 GPU 自绘 UI 工具�
   （暂存 = HEAD vs index，未暂存 = index vs 工作区）、提交输入（Commit / Amend）、
   提交历史；底部 Diff / 源码区随空间生长，Source 标签同样支持 Raw/Fmt 格式化视图；
   ⌘K 或刷新按钮重新收集状态。
-- **Settings 模态框** —— Providers（Provider / 模型 / Key / Base URL，支持 OpenAI
+- **Settings 模态框** —— **Agent type**（Built-in LLM loop / Claude Code CLI）
+  选择驱动引擎的后端；Providers（Provider / 模型 / Key / Base URL，支持 OpenAI
   兼容端点与在线拉取模型列表；**Reasoning 思考档位 Off / Low / Medium / High**
-  跟随后端放在此分区）与 Agent（系统提示 + 固定工具集说明；**不暴露温度 / 限额 /
+  跟随后端放在此分区；claude 形态换成 CLI 探测行 + 模型别名 + "CLI 自己登录"）
+  与 Agent（系统提示 + 固定工具集说明；**不暴露温度 / 限额 /
   流式开关**，采样走 provider 默认）两个分区，值即时生效并**在对话框打开期间实时
   落盘**（改完直接关窗口/杀进程也不丢；`settings.json` 含 API Key，文件权限 0600），
   对话框高度固定、切换分区不跳动，正文与分隔线/滚动条留白舒适。
@@ -112,6 +127,13 @@ go build -o crux.exe .
 go test ./...
 ```
 
+对**真实 Claude Code CLI** 的冒烟测试默认跳过，显式开启（需要 PATH 上有
+已登录的 `claude`）：
+
+```sh
+CRUX_LIVE_CLAUDE=1 go test ./internal/engine -run TestLiveClaudeSmoke -v -timeout 10m
+```
+
 生成 README 用的界面截图（写入 `MYGO_UI_SHOTS` 指向的目录）：
 
 ```sh
@@ -126,9 +148,9 @@ MYGO_UI_SHOTS=screenshots go test ./internal/app -run TestScreenshots
 | 路径 | 职责 |
 | --- | --- |
 | `internal/store/` | **数据层**（无 UI 依赖）：家目录 `~/.crux-agent/` 布局、旧目录迁移链（`%AppData%` → `~/.mujicaui-agent-demo` → `~/.crux-agent`）、settings / workspace / 会话索引 / 每会话转录的落盘结构与原子写（唯一临时名 + 重试 + 兜底直写） |
-| `internal/engine/` | **逻辑层**（无 UI 依赖）：pi-ai-go agent 循环封装（回调式流事件）、`bash` / `read_file` / `write_file` 工具集、模型解析与 Reasoning 档位、连接测试、provider 注册表门面 |
+| `internal/engine/` | **逻辑层**（无 UI 依赖）：pi-ai-go agent 循环封装（回调式流事件）、`bash` / `read_file` / `write_file` 工具集与**权限三档门**、OS 沙箱层（macOS seatbelt / Linux bubblewrap / Windows 不可用）、Claude Code CLI 后端（spawn / stream-json 事件 / 审批 wire / 收割杀树）、模型解析与 Reasoning 档位、连接测试、provider 注册表门面 |
 | `internal/md/` | 纯 Markdown 解析（块级结构，供 UI 层渲染为可选中元素） |
-| `internal/app/` | **UI 层**：`app.go` 引导（迁移/恢复状态/窗口/心跳）、`state.go` 状态模型、`shell.go` 外壳与侧栏、`thread.go` 对话线程（一条回复一个气泡）、`llm.go` 引擎适配器、`persist.go` 持久化胶水、`settings.go` 设置模态框、`workspace.go` 目录树、`drawer.go` 代码抽屉、`mdview.go` 可选中 Markdown 渲染、`vcs.go` 真实 git 后端、`repo.go` 检视器、`welcome.go` 欢迎页、`commands.go` ⌘K 面板、`wsdialog.go` 工作区对话框、`tokens.go` 主题转发 |
+| `internal/app/` | **UI 层**：`app.go` 引导（迁移/恢复状态/窗口/心跳）、`state.go` 状态模型、`shell.go` 外壳与侧栏、`thread.go` 对话线程（一条回复一个气泡 + 权限模式选择器）、`llm.go` 引擎适配器（双后端派发）、`approval.go` 权限卡与审批桥、`persist.go` 持久化胶水、`settings.go` 设置模态框、`settings_claude.go` Claude 表单、`workspace.go` 目录树、`drawer.go` 代码抽屉、`mdview.go` 可选中 Markdown 渲染、`vcs.go` 真实 git 后端、`repo.go` 检视器、`welcome.go` 欢迎页、`commands.go` ⌘K 面板、`wsdialog.go` 工作区对话框、`tokens.go` 主题转发 |
 | `main.go` | 入口：调用 `app.Run()` |
 | `mygo.json` | 打包元数据 |
 | `resources/icon.png` | 应用图标 |
