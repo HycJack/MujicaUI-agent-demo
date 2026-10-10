@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -323,6 +324,7 @@ type app struct {
 	redraw        func(func())       // runs a closure on the UI thread + repaints (win.Update); nil in tests
 	cancelFn      context.CancelFunc // cancels the current streaming reply
 	provView      providerView       // providers config pane state
+	claudeBin     string             // resolved claude CLI path ("" when not installed)
 	savedSettings string             // last persisted settings JSON (live-save dirty check)
 
 	// workspace
@@ -359,6 +361,11 @@ func newApp() *app {
 	a.threaded = map[string]bool{}
 	a.dirty = map[string]bool{}
 	a.provView = defaultProviderView()
+	// Resolve the claude CLI once at startup (no spawn — LookPath only);
+	// the claude settings form probes its --version on demand.
+	if p, err := exec.LookPath("claude"); err == nil {
+		a.claudeBin = p
+	}
 	a.thread = thread{mode: chat.ModeAgent}
 	return a
 }

@@ -34,6 +34,11 @@ type providerView struct {
 	fetching bool     // a /models fetch is in flight
 	fetched  []string // model ids fetched from the endpoint
 	fetchErr string   // last fetch error, if any
+	// claude detection row (the Agent type's claude form)
+	claudeProbing bool
+	claudePath    string
+	claudeVer     string
+	claudeErr     string
 }
 
 // defaultProviderView returns the Providers pane's initial UI state.
@@ -108,6 +113,13 @@ func modelLabel(m engine.ModelInfo) string {
 // backendLabel is the provider·model display for the title bar and composer,
 // resolving the configured backend against the engine's registry.
 func (a *app) backendLabel() string {
+	if a.llm.Backend == "claude" {
+		name := a.llm.Model
+		if name == "" {
+			name = "default"
+		}
+		return "claude · " + name
+	}
 	m, err := engine.ModelInfoOf(a.llm.Provider, a.llm.Model)
 	name := ""
 	if err == nil {
@@ -226,9 +238,34 @@ func (a *app) settingsNavItem(c *ui.Context, k tokensT, id, label string, icon *
 	})
 }
 
-// providersPane is the Providers settings pane content.
+// providersPane is the Providers settings pane content: the Agent type
+// selector first (which backend drives the loop), then the matching form.
 func (a *app) providersPane(c *ui.Context) {
 	ui.Column(c).Gap(14).Children(func() {
+		// Agent type: which backend drives the loop. The builtin LLM
+		// loop form follows; the claude form lives in settings_claude.go.
+		input.FormField(c, "Agent type", input.FormFieldOptions{
+			Description: "The built-in loop calls a provider API with Crux's own tools; Claude Code drives the claude CLI.",
+		}, func() *ui.Element {
+			kindIdx := 0
+			if a.llm.Backend == "claude" {
+				kindIdx = 1
+			}
+			seg := ui.Segmented(c, &kindIdx, "Built-in LLM loop", "Claude Code CLI").Label("Agent type")
+			if seg.Changed() {
+				if kindIdx == 1 {
+					a.llm.Backend = "claude"
+				} else {
+					a.llm.Backend = "builtin"
+				}
+			}
+			return seg
+		})
+		if a.llm.Backend == "claude" {
+			a.claudeProvidersPane(c)
+			return
+		}
+
 		// Provider
 		prevProvider := a.llm.Provider
 		input.FormField(c, "Provider", input.FormFieldOptions{Description: "A known provider, or OpenAI-compatible for a custom endpoint."}, func() *ui.Element {
