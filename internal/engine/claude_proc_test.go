@@ -287,6 +287,39 @@ func TestClaudeStderrTailIsError(t *testing.T) {
 	}
 }
 
+// A turn that reached its result line is SETTLED: the CLI may exit
+// non-zero right after (its own error turn — the API error already rode
+// the assistant message and the result note) and the exit status must
+// not replace the reply. Found by the live probe against a real CLI
+// whose endpoint was unreachable.
+func TestClaudeResultSettlesDespiteExitCode(t *testing.T) {
+	bin := fakeClaudeScript(t,
+		[]string{
+			`echo {"type":"assistant","message":{"content":[{"type":"text","text":"API Error: Connection error"}]}}`,
+			`echo {"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":180545,"total_cost_usd":0.0,"result":"API Error: Connection error","session_id":"settled-1"}`,
+			`exit /b 1`,
+		},
+		[]string{
+			`echo '{"type":"assistant","message":{"content":[{"type":"text","text":"API Error: Connection error"}]}}'`,
+			`echo '{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":180545,"total_cost_usd":0.0,"result":"API Error: Connection error","session_id":"settled-1"}'`,
+			`exit 1`,
+		})
+	var text, note string
+	err := RunClaude(context.Background(), ClaudeConfig{Bin: bin, Mode: ModeFull, Workdir: t.TempDir()}, "hi", Callbacks{
+		OnText: func(s string) { text = s },
+		OnNote: func(s string) { note = s },
+	})
+	if err != nil {
+		t.Fatalf("a settled turn must not fail on the CLI's exit status: %v", err)
+	}
+	if !strings.Contains(text, "API Error") {
+		t.Fatalf("text = %q", text)
+	}
+	if !strings.Contains(note, "Stopped") {
+		t.Fatalf("note = %q", note)
+	}
+}
+
 // A missing binary is a setup error, not a run failure.
 func TestClaudeMissingBin(t *testing.T) {
 	err := RunClaude(context.Background(), ClaudeConfig{Mode: ModeFull, Workdir: t.TempDir()}, "hi", Callbacks{})

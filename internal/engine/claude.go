@@ -94,6 +94,13 @@ func RunClaude(ctx context.Context, cfg ClaudeConfig, prompt string, cb Callback
 	}
 	waitErr, killed := Reap(cmd, stdin)
 
+	// A turn that reached its result line is settled, full stop: the
+	// CLI's own report — including an error turn, whose text rode the
+	// assistant message and whose note said Stopped — already reached
+	// the user, and a non-zero exit after result must not replace it.
+	if r.sawResult {
+		return nil
+	}
 	// A cancelled turn is only a clean stop when the CLI had actually got
 	// on with it. A run that produced nothing at all and was then cut off
 	// — a CLI that hung before its first line, or died without saying why
