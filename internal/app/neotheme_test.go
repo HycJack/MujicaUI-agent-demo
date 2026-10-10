@@ -12,10 +12,10 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// TestNeoSheet pins the paper-and-ink mapping: one ink for every
-// outline, sky as the accent whose text rides on it in ink.
+// TestNeoSheet pins the built-in paper-and-ink mapping: one ink for
+// every outline, sky as the accent whose text rides on it in ink.
 func TestNeoSheet(t *testing.T) {
-	k := neoSheet()
+	k := defaultTokens().Mix()
 	want := map[string]struct {
 		got  ui.Color
 		want ui.Color
@@ -37,19 +37,22 @@ func TestNeoSheet(t *testing.T) {
 }
 
 // TestNeoSheetInstalls checks both appearances wear the sheet — the
-// sticker look only holds on paper, so there is no dark fallback.
+// sticker look only holds on paper, so there is no dark fallback. The
+// assertion is self-consistent: whatever skin the machine's theme.json
+// selects, the window must wear exactly that sheet.
 func TestNeoSheetInstalls(t *testing.T) {
+	want := theSheet()
 	var installed theme.Tokens
 	tt := ui.NewTester(func(c *ui.Context) {
 		useTheme(c)
 		installed = core.Tokens(c)
 	}, 800, 600)
 	tt.Frame()
-	if installed.Background != ui.Hex("#FDF6E8") {
-		t.Errorf("Background: got %v, want the paper", installed.Background)
+	if installed.Background != want.Background {
+		t.Errorf("Background: got %v, want the sheet's paper", installed.Background)
 	}
-	if installed.Border != ui.Hex("#111111") {
-		t.Errorf("Border: got %v, want the ink", installed.Border)
+	if installed.Border != want.Border {
+		t.Errorf("Border: got %v, want the sheet's ink", installed.Border)
 	}
 }
 

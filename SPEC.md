@@ -172,12 +172,15 @@ UI（根目录 `package main`）；数据层与逻辑层**不 import 任何 UI �
 | `wsdialog.go` | Open-workspace 对话框（目录输入 + recents）。 |
 | `settings.go` | **Settings 模态框**：`settingsDialogs`（**打开期间实时保存** `saveSettingsIfChanged`）+ `settingsBody`、`providersPane`（provider/model/Key/BaseURL + **Reasoning 四档**，OpenAI 兼容端点、`fetchModels`、Test connection 经 `engine.TestConnection`）、`agentPane`（系统提示 + 固定工具集说明 + 停止/状态）。 |
 | `mdview.go` | 可选中 Markdown 渲染：块缓存（`ui.Local`）+ 每帧重建，全元素 `.Selectable()`，行内 Span/链接双形式，代码块用 `chat.CodeBlock`（解析在 `internal/md`）。 |
-| `welcome.go` | 新会话欢迎页：能力卡 + starter chips + composer。 |
+| `welcome.go` | 新会话欢迎页：neo 贴纸英雄区（Bungee 问候 + 像素副标题 + 像素精灵）+ 能力卡（墨描边硬阴影，示例点击填草稿）+ starter chips + composer。 |
 | `workspace.go` | **工作区**：真实目录树的状态与 IO——`listDir`（目录在前、忽略噪音）、`loadWsDir` 懒加载（goroutine + `a.redraw`）、`wsEnsureLoaded`（Outline 行内触发）、`readCapped` 文件预览（256 KiB 上限）、`attachFile` 附加到对话、`reloadWorkspace`。 |
 | `drawer.go` | **代码抽屉**：右侧 `overlay.Drawer`（宽 720）大尺寸查看器——树点击打开文件内容（Raw/Fmt + 附加），仓库面板 `maximize` 把 Diff/源码放大进来；内容高度按窗高推导（抽屉内容区是 Scroll，grow 会塌）。 |
 | `vcs.go` | **真实 git 后端**：`runGit`（15s 超时）、`parseStatus`/`parseBranches`/`parseLog`（porcelain 解析）、`collectVCS` 快照、`fileVersions`（HEAD / index / worktree 三方取版本，二进制探测）、`vcsAction`（stage/unstage）、`commitStaged`（含 amend）、`checkoutBranch`/`createBranch`、`loadSelectedDiff`。 |
 | `repo.go` | 右栏检视器：Workspace 标签（`ui.Outline` 目录树：自定义行 + 右键菜单附加/查看/复制路径）与 Repository 标签（真实分支切换、暂存/未暂存变更、提交输入、历史、Diff / 源码）。 |
-| `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`、`tokensT` 别名。 |
+| `tokens.go` | 主题接入：`tokens(c)`、`useTheme(c)`（每帧装 neo 贴纸 sheet，亮/暗同纸）、`tokensT` 别名。 |
+| `neo.go` | 贴纸组件套件：`neoCard`（2px 墨描边 + 4px 硬阴影 + 14px 圆角）、`neoChip`（像素大写状态贴纸）、`neoButton`（按压落影）、像素精灵、`neoSidebarBG`。颜色全部读令牌。 |
+| `neofonts.go` | 内嵌 Bungee / Press Start 2P（OFL 许可证随附），`registerFonts()` 启动时注册一次；`fontPixel`/`fontDisplay` 家族名。 |
+| `themejson.go` | **换肤口**：`~/.crux-agent/theme.json` 覆盖 8 个色值（缺文件/坏文件回退内置 sheet）；`LoadThemeTokens` → `Mix()` 摊开成 `theme.Tokens`；进程启动读一次（`theSheet`），换肤改文件后重启生效。 |
 | `commands.go` | ⌘K 命令面板与 `runCommand`（含 providers / agent / workspace / reload-workspace 命令）。 |
 | `*_test.go` | UI 层测试（见 §14）；`internal/store`、`internal/engine`、`internal/md` 各有自己的包内测试。 |
 | `mygo.json` | 打包元数据。 |
@@ -756,14 +759,36 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
 
 ---
 
-## 10. 主题（`tokens.go`）
+## 10. 主题（`tokens.go` + `themejson.go` + `neo.go`）
 
 - `tokensT = theme.Tokens`：主题令牌别名，签名从此取色。
 - `tokens(c)` → `core.Tokens(c)`：当前主题令牌。
-- `useTheme(c)` → `core.Use(c, core.Settings{})`：每帧安装 MujicaUI 主题（沿用库默认亮/暗）。
+- `useTheme(c)`：每帧安装 **neo 贴纸 sheet**（`core.Settings{Light: &sheet, Dark: &sheet}`，亮/暗同纸——墨描边只在亮底上成立）。sheet 颜色来自 `themejson.go`，`theSheet()` 进程读一次 `~/.crux-agent/theme.json`，缺/坏文件回退内置值。
+- `neo.go`：贴纸形状语言——卡片 2px 墨描边 + 4px 零模糊硬阴影 + 14px 圆角，贴纸 1.5px 描边 + 像素大写标签（状态不只靠颜色），按压落影，像素精灵装饰。颜色全读令牌，不自造色板。
+- 字体：Bungee（展示字体）/ Press Start 2P（像素字体）内嵌注册（`neofonts.go`）。
 
 配色全部走令牌（`Background/Surface/SurfaceHover/Text/TextMuted/Border/Accent/Success/Warning/...`），
 不自造 `ui.Hex` 调色板。
+
+### 10.1 theme.json 换肤
+
+`~/.crux-agent/theme.json`（`store.Dir()`）覆盖 8 个色值，全部可选、空缺保留内置值：
+
+```json
+{
+  "paper":  "#FDF6E8",
+  "ink":    "#111111",
+  "sky":    "#6BA8FF",
+  "green":  "#6BE07A",
+  "red":    "#FF5B4A",
+  "amber":  "#FFC24B",
+  "violet": "#8B6BFF",
+  "muted":  "#635B4A"
+}
+```
+
+`paper` 是窗口纸底，`ink` 是所有描边与文字，`sky` 是 accent；`green/red/amber/violet` 是状态色
+（amber 兼 ornament），`muted` 是次级文字。改完重启应用生效；坏文件按内置皮肤启动，不报错。
 
 ---
 
