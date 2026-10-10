@@ -153,7 +153,7 @@ func loadTool(t *store.ToolCall) *toolRun {
 func storeMsg(r row) store.Message {
 	m := store.Message{
 		ID: r.id, Role: storeRole(r.role), Kind: storeKind(r.kind), Text: r.text,
-		LLMText: r.llmText, ThinkText: r.thinkText, At: r.at, ThinkOpen: r.thinkOpen,
+		LLMText: r.llmText, ThinkText: r.thinkText, At: r.at,
 	}
 	for _, t := range r.tools {
 		m.Tools = append(m.Tools, storeTool(t))
@@ -166,16 +166,24 @@ func storeMsg(r row) store.Message {
 }
 
 // loadMsg restores a stored message (legacy rows keep their single tool).
+// The timeline is rebuilt without its interleaving — reasoning first, then
+// the tool calls — and folded, matching DSH's completed-turn presentation.
 func loadMsg(m store.Message) row {
 	r := row{
 		id: m.ID, role: uiRole(m.Role), kind: uiKind(m.Kind), text: m.Text,
-		llmText: m.LLMText, thinkText: m.ThinkText, at: m.At, thinkOpen: m.ThinkOpen,
+		llmText: m.LLMText, thinkText: m.ThinkText, at: m.At,
 	}
 	for i := range m.Tools {
 		r.tools = append(r.tools, loadTool(&m.Tools[i]))
 	}
 	if m.Tool != nil {
 		r.tool = loadTool(m.Tool)
+	}
+	if r.thinkText != "" {
+		r.steps = append(r.steps, step{think: r.thinkText})
+	}
+	for _, t := range r.toolsOf() {
+		r.steps = append(r.steps, step{tool: t})
 	}
 	return r
 }
@@ -245,6 +253,11 @@ func (a *app) loadSettings() {
 	}
 	if ok {
 		a.llm.LLMConfig = cfg
+		// A stored prompt that is verbatim the old default upgrades to the
+		// current one; anything else is the user's own text and stays.
+		if cfg.SystemPrompt == legacySystemPrompt {
+			a.llm.SystemPrompt = defaultSystemPrompt
+		}
 	}
 	a.snapshotSettings()
 }

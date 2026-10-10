@@ -147,7 +147,7 @@ UI（根目录 `package main`）；数据层与逻辑层**不 import 任何 UI �
 
 | 文件 | 职责 |
 | --- | --- |
-| `loop.go` | **agent 循环封装**：`Config`（provider/model/key/baseURL/systemPrompt/thinking/workdir）、`Run(ctx, cfg, history, callbacks)`——解析模型、组装 `agent.AgentLoopConfig`、消费事件流并折叠为**回调**（`OnThinking`/`OnText` 传**累计全文**，跨轮正文空行衔接；`OnToolStart`/`OnToolEnd` 带耗时）、`ResolveModel`（OpenAI 兼容端点直接构建 + 注册表查询 + BaseURL 覆盖）、`ThinkDefault`。 |
+| `loop.go` | **agent 循环封装**：`Config`（provider/model/key/baseURL/systemPrompt/thinking/workdir）、`Run(ctx, cfg, history, callbacks)`——解析模型、组装 `agent.AgentLoopConfig`、消费事件流并折叠为**回调**（`OnThinking`/`OnText` 传**本轮累计全文**，每轮 message 重置，由调用方拼接分段；`OnToolStart`/`OnToolEnd` 带耗时）、`ResolveModel`（OpenAI 兼容端点直接构建 + 注册表查询 + BaseURL 覆盖）、`ThinkDefault`。 |
 | `tools.go` | **agent 工具集**：`bash`（平台 shell 执行，输出 8 KiB 截断）、`read_file`（64 KiB 截断）、`write_file`（Details 携带 old/new 供评审卡）；全部以 workdir 为根，`write_file` 自动建父目录。 |
 | `registry.go` | provider 注册表门面：`Providers`/`Models`/`ModelInfoOf`（UI 只见 `ModelInfo`）、`TestConnection`（单轮连通性检查）。 |
 
@@ -239,15 +239,29 @@ const (
     rowDiff                  // 文件变更评审卡（FileChangeCard）
 )
 
+// step 是回复过程时间线的一项：一段思考、一条中间正文消息或一次工具调用，
+// 按发生顺序（§7.3.2）。
+type step struct {
+    think string   // 思考段全文（其它步为空）
+    text  string   // 中间正文消息（其它步为空）
+    tool  *toolRun // 工具步的调用（思考/正文步为 nil）
+    open  bool     // 该步的折叠态（不持久化；正文步不用）
+}
+
 type row struct {
     id        string
     role      chat.MessageRole
     kind      kind
     text      string
-    llmText   string   // LLM 视角文本（附件内容折叠）
-    thinkText string   // 思考增量
+    llmText   string     // LLM 视角文本（附件内容折叠）
+    thinkText string     // 全部思考段拼接（持久化形态）
     at        time.Time
-    tool      *toolRun // 工具卡片行的真实调用数据
+    doneAt    time.Time  // 流式结束时刻（完成态组头的时长）
+    tool      *toolRun   // 旧版单工具行（合并前存储的转录）
+    tools     []*toolRun // 本回复的工具调用，按执行顺序
+    steps     []step     // 过程时间线：思考段与工具调用按发生顺序交错
+    procOpen  bool       // 过程区（组头）折叠态：流式中默认展开，完成自动收起
+    streaming bool       // 回复仍在流式（正文按纯文本渲染）
 }
 
 type toolRun struct {
@@ -420,25 +434,29 @@ Column (Fill, Background)
      ToolExecution: ToolExecSequential, ExecEnv: NewDefaultExecutionEnvWithDir(workdir),
      SimpleStreamOptions}` 并消费事件流，折叠为回调（行 id 只在 goroutine 侧铸造，
      UI 线程只见捕获的字符串，无共享索引竞争）：
-     - `OnThinking(text)`：**累计全文**（引擎内跨轮累加）→ `a.redraw` 刷新当前行
-       `thinkText`。
-     - `OnText(text)`：**累计全文**（后续轮次——工具结果之后——的正文以空行衔接，
-       衔接逻辑在引擎内）→ 刷新当前行 `text`。
+     - `OnThinking(text)`：**本轮思考**（引擎每轮 message 重置缓冲）→ `a.redraw` →
+       `row.setThink`：同轮增长原地更新最后思考段，工具后的新轮思考追加新段
+       （时间线交错，§7.3.2），`thinkText` 同步为全部段拼接。
+     - `OnText(text)`：**本轮正文**（引擎每轮 message 重置缓冲；模型看过工具结果后
+       的中间回复就在这里）→ `row.setText`：同轮增长原地更新最后正文段，工具后的
+       新轮正文追加新段，`r.text` 同步为全部段按空行拼接（持久化/历史的形态
+       不变）。
      - `OnToolStart(callID, name, args)`：`appendTurnTool` 把工具追加进**当前回复行
-       的 `tools` 卡片块**（bash 预填 `CommandRun`），状态 Running。
+       的 `tools` 卡片块与时间线 `steps`**（bash 预填 `CommandRun`），状态 Running。
      - `OnToolEnd(callID, result, isErr, dur)`：`finishToolRow` 按 callID 在各行
-       `tools`（含旧版单工具字段）里找到卡片，落定结果/错误/耗时；bash 填
-       `CommandRun`（输出 + 退出码），write_file 从 Details 解析 old/new 填
-       `FileChange`。
+       `tools`（含旧版单工具字段）里找到卡片，落定结果/错误/耗时（isErr 置
+       `AgentFailed`，否则 `AgentDone`）；bash 填 `CommandRun`（输出 + 退出码），
+       write_file 从 Details 解析 old/new 填 `FileChange`。
    - 完成后（defer）`a.llm.Busy=false`、清 `cancelFn`、`endStreamingRow`（清
      `streaming`，正文从流式纯文本切换为 Markdown 渲染）、`ScrollToEnd`、
      `persistSessions()`；`engine.Run` 返回错误且非 ctx 取消时 `streamErrorRow`
      落错误文案。
 
-> **一条回复一个气泡**：思考 + 工具调用折叠进该行的 `ThinkingBlock`（每行独立的
-> `thinkOpen` 开合状态），正文在块下方；流式期间正文走 `StreamingText`（纯文本 +
-> 光标，无内容时先显示 `TypingIndicator` 等待点），完成后走自研 `mdView`
-> （标题/列表/表格/代码块全量渲染，**全元素可拖选复制**）。
+> **一条回复一个气泡**：思考 + 工具调用进该行的**过程时间线**（`steps`，§7.3.2
+> ——组头一行 + 思考段/工具步按发生顺序逐行折叠），正文在过程区下方；流式期间
+> 正文走 `StreamingText`（纯文本 + 光标，无内容时先显示 `TypingIndicator`
+> 等待点），完成后走自研 `mdView`（标题/列表/表格/代码块全量渲染，
+> **全元素可拖选复制**）。
 > 线程约定：UI 线程持有全部状态。goroutine 只缓冲局部字符串，经
 > `a.redraw(fn)`（即 `win.Update`）把 `fn` 调度回 UI 线程再改状态；闭包**不能**捕获
 > `strings.Builder`（`win.Update` 不等待 `fn`，闭包可能在 goroutine 退出后执行）。
@@ -454,6 +472,15 @@ agent 控制台；输出与内容都有上限防止刷爆上下文）：
 | `bash` | 平台 shell（Windows `cmd /C`，其它 `sh -c`）执行命令行，stdout+stderr 合并返回，8 KiB 截断；Details 带 `exit` 退出码 | `CommandExecutionCard`（命令/输出/退出码/耗时，可点停止 → `a.cancel()`） |
 | `read_file` | 读文件（相对路径解析到工作区根），64 KiB 截断 | `ToolCallCard`（args/result JSON） |
 | `write_file` | 写文件（自动建父目录），Details 携带 `{path, old, new}` | `FileChangeCard`（before/after diff 评审记录；写入已发生，卡片是留档） |
+
+**默认系统提示词**（`state.go` `defaultSettings`，可被 Settings 改写并持久化）：
+移植自 DSH 的组装版系统提示词（`snapshots/web/fresh-round-trip/
+system-prompt.expected.md`）——身份两行 + 逐条规则，**只保留映射到 Crux
+工具集的规则**（bash 退出码检查、read_file 优先于 cat、write_file 先读后写、
+最终回复展示主结果 + 代码块 + 用户语言），DSH 侧引用 Crux 没有的工具的行
+（glob/grep/后台任务/web_search/goal/workflow/subagent/present/@-路径引用）整行
+丢弃，不保留会诱导模型调用不存在工具的指引。加载升级：存的是**旧默认逐字
+原文**（`legacySystemPrompt`）则替换为新默认；自定义提示词原样保留。
 
 ### 7.1.1 Settings 模态框（Providers / Agent）
 
@@ -520,15 +547,15 @@ Reasoning 档位）。
 
 ### 7.3 `renderRow(c, r)`
 
-**一条 AI 回复 = 一个气泡**（`rowReasoned`）：思考 + 工具调用折叠进可收起的
-`ThinkingBlock`（每行独立 `thinkOpen`），正文在块下方——流式期间 `StreamingText`
-（纯文本 + 光标，等待首 token 时显示 `TypingIndicator`），完成后 `mdView`
-（标题/有序无序列表/表格/代码块，**可拖选复制**）。
+**一条 AI 回复 = 一个气泡**（`rowReasoned`）：过程区（思考 + 工具，见 §7.3.2）
+在正文上方；正文在块下方——流式期间 `StreamingText`（纯文本 + 光标，等待首
+token 时显示 `TypingIndicator`），完成后 `mdView`（标题/有序无序列表/表格/代码
+块，**可拖选复制**）。
 
 | kind | 组件 |
 | --- | --- |
 | `rowTyping` | `chat.TypingIndicator(c, "Crux")` |
-| `rowReasoned` | `MessageBubble` → [等待提示（streaming 且无思考/工具/正文时 `TypingIndicator`）+ `ThinkingBlock(&r.thinkOpen, {Thinking: streaming, Started: at})`：思考文本（Selectable）+ `toolCards(r)`（bash→`CommandExecutionCard` 可中止、write_file→`FileChangeCard`、其余→`ToolCallCard`）] + 正文（streaming→`StreamingText`；完成→**`mdView` 可选中 Markdown**）+ `actions` |
+| `rowReasoned` | `MessageBubble` → [等待提示（streaming 且无思考/工具/正文时 `TypingIndicator`）+ **过程区 `processBlock`（§7.3.2，时间线：组头一行 + 思考段/工具步按发生顺序逐行折叠）**] + 正文（streaming→`StreamingText`；完成→**`mdView` 可选中 Markdown**）+ `actions` |
 | `rowTools` / `rowCommand` / `rowDiff` | **旧版独立工具行**（合并前存储的转录仍可显示），渲染分支保留 |
 | 默认（用户/纯文本行） | `MessageBubble` → `ui.RichText(Span).Selectable()`（原文逐字、可选中）+ `actions` |
 
@@ -546,6 +573,97 @@ MujicaUI 的 `chat.MarkdownView` 构建的文本元素**不可选中**（且解�
   每帧重建原生元素；**所有文本 `.Selectable()`**（标题/段落/列表项/引用/表格单元格），
   拖选 + Ctrl+C 可复制；行内 `code`/`**bold**`/`~~strike~~` 走构造器 Span，含
   `[link](url)` 的段落走元素形式保链接可点；代码块用 `chat.CodeBlock`（自带复制/折叠）。
+
+### 7.3.2 过程区时间线（`processBlock`，参考 DeepSeek Harness）
+
+演进：v1 单层 `ThinkingBlock` 展开无限长；v2 三层折叠分了两摞、无类别图标；
+v3 引入时间线但步骤嵌在**限高滚动容器**里——"工具全挤在 thinking 里"；v4 把
+过程区移出气泡成消息流独立块；v5 加入中间正文段。v6 收拢回**气泡内**（气泡是
+整条回复的容器），保留 v4/v5 的关键结构——步骤在气泡内**按发生顺序直接铺开**
+（不套外层滚动容器）、每步独立折叠、每类工具独立图标与状态标：
+
+```
+┌─ Crux 气泡（rowReasoned = 整条回复）────────────────────┐
+│ ① 组头（procOpen，一行）                                │
+│    ▸ [活动图标] 摘要 · 时长                              │
+│ ② 步骤行（展开时按发生顺序在气泡内铺开，不套滚动容器）：   │
+│    ▸ 🧠 Thinking · 第一行预览…                          │
+│    ▸ ✓/✗ ⌨ Ran command · tail -40 …                    │
+│    💬 The quota error is at line 3…（中间正文，可见）     │
+│    ▸ 📄 Read file · jobs/export.sh                      │
+│ ③ 答案正文（最后一个正文段；等待时 TypingIndicator）      │
+│ ④ actions                                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**数据模型**（`state.go`）：`row.steps []step`（思考段 | `*toolRun`，按发生顺序）。
+流式期间由引擎回调构建：
+
+- `OnThinking` → `row.setThink(text)`：最后一步是思考段且 text 是它的延伸
+  （同轮增量）→ 原地更新；否则**追加新思考段**（引擎每轮 message 重置思考，
+  工具之后的新一轮思考 = 新段——交错由此而来）。`thinkText` = 全部段拼接
+  （持久化形态；顺带修复旧实现多轮思考互相覆盖的问题）。
+- `OnToolStart` → `appendTurnTool`：追加工具步，与 `tools` 共享同一
+  `*toolRun` 指针（`OnToolEnd` 的结果更新两处都可见）。
+- 重载（`loadMsg`）不持久化交错结构：重建为 [思考段（全文）， 工具步…]，
+  全部收起。`steps` 为 nil 的行渲染时惰性物化一次（同一规则）。
+
+**每步一行（DSH ToolRow / ReasoningRow 形态）**——`data.Collapsible` 自定义
+Trigger，行内 `[状态图标] [工具图标] 标题 · 摘要 · 时长`：
+
+| 步类型 | 图标（`icons.Must`，已核对存在） | 标题 | 摘要（单行截断） | 展开体 |
+| --- | --- | --- | --- | --- |
+| 思考段 | `brain` | Thinking | 段落首行（流式中实时跟随末段） | 限高滚动全文（Selectable） |
+| bash | `terminal` | Ran command | 命令首行（`run.Command`） | `CommandExecutionCard`（停止按钮中止循环） |
+| read_file | `file-text` | Read file | `path` 参数 | `ToolCallCard`（Args/Result 二级折叠） |
+| write_file | `pencil` | Wrote file | `path` 参数 | `FileChangeCard`（评审） |
+| 其余 | `bot` | 工具名 | `path` 或 args 首行 | `ToolCallCard` |
+| **正文段** | 无 | —（**可见文本，不折叠**） | — | 段落 Markdown（`mdView`） |
+
+**中间正文（v5）**：模型看过工具结果后会在下一轮输出正文（中间回复；引擎内
+工具结果由 `agent.AgentLoop` 回灌——模型看得到，缺的只是展示）。`OnText` 每轮
+重置 → `row.setText` 维护**正文步**：同轮增长原地更新，工具后的新轮正文追加
+新段；`r.text` = 全部段按空行拼接（持久化/历史形态不变）。**最后一个正文段**
+是最终答案（渲染进回答气泡：流式 `StreamingText` → 完成 `mdView`）；**更早的
+正文段**是过程叙述——以可见文本行出现在时间线的工具行之间，随组折叠收起；
+工具在其后开始时，原"最后段"自动转为时间线行。无正文步的行（重载/错误/
+测试直造）气泡回退 `r.text`。
+
+- 运行中：行首 `core.Spinner`；失败：摘要后缀红色 "failed"；行尾
+  `agent.AgentDuration(dur)`（`tnum` 等宽数字）。
+- 标题 `FontWeight(500)`，摘要/时长 `k.TextMuted`，失败 `k.Danger`。
+
+**组头（`procHeader`）**：图标取**当前/首要活动类别**（DSH
+`PROCESS_ICONS[top]`）：流式中 = 最后一个运行中工具的图标（无则 brain），
+完成 = 第一类工具的图标（无工具 = brain）。文案与时长沿用 v2：流式 =
+"Running bash…"+ 实时计时（`c.Now()−r.at`，`c.After` 跳秒）；完成 = 前三类
+活动无计数摘要 + `doneAt−r.at`。
+
+**折叠时机**（沿用 v2，对齐 DSH `collapseTiming=completion`）：新回复
+`procOpen: true`；`endStreamingRow` 置 `streaming=false` 时同时置
+`procOpen=false, doneAt=now`——完成即收起成一行摘要。每步 `open` 与
+`procOpen` 都不持久化，重载即收起。
+
+**状态标（v6）**：每个工具步行首带状态图标——`circle-check`（Success，成功）、
+`circle-x`（Danger，失败）或 `core.Spinner`（运行中），一眼分辨成败；失败行尾
+再缀红色 "failed"。`finishToolRow` 在 `isErr` 时置 `state = AgentFailed`（此前
+只写 errMsg、状态停留在 Done，导致收起行看不出错误）。
+
+**气泡时机**（v6）：气泡是**整条回复的容器**，rowReasoned 恒渲染——等待首
+token 时 `TypingIndicator`；流式中 = 过程区（组头展开）+ 末段
+`StreamingText`；完成 = 折叠的组头一行 + 末段 `mdView` + actions。更早的
+正文段留在过程时间线里。
+
+**限高边界**（沿用 v4）：步骤行本身**不限高**——在气泡内按发生顺序铺开；每步
+的**展开体**封顶：思考段全文 `ui.Scroll().Shrink(1).MaxHeight(280)`（长思考
+内部滚动），工具卡自带封顶（`AgentCode` maxHeight 240/320）。组头展开**不**
+包外层滚动容器。
+
+**验收**（`proclayers_test.go`）：`setThink`/`setText` 交错语义（同轮增长 vs
+新段、多段拼接）；工具步共享指针（结果更新两处可见）；渲染断言（收起态不构建
+正文、组头单行、展开后步骤按发生顺序出现在**气泡之外**、每类工具图标行、
+思考首行预览、中间正文出现在工具行之间、末段进气泡、正文不被 200 行思考
+推出视口）。
 
 ### 7.4 `actions(c, r)` —— 每条消息下的操作行
 
@@ -922,13 +1040,19 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    夹具（`convfixture_test.go`：一条含思考 + 三个工具卡 + Markdown 列表/表格正文
    的合并回复）回归 Row/Stretch 布局塌陷；首帧末行可见、上滚后首行与 Markdown
    元素可见。
-15. **`TestMdViewRender` / `TestMessageActionsCopyAndTime` /
+15. **`TestProcSummary` / `TestEndStreamFoldsProcess` / `TestProcessLayers` /
+    `TestThinkTimeline`**（`proclayers_test.go`）—— 过程区组头摘要纯函数全分支；
+    完成即收起并钉住 doneAt；渲染断言（收起态不构建正文、组头单行、展开后
+    按发生顺序逐行出现、每类工具图标行、思考首行预览、正文不被 200 行思考
+    推出视口）；`setThink` 交错语义（同轮增长原地更新、工具后新段追加、
+    thinkText 多段拼接）。
+16. **`TestMdViewRender` / `TestMessageActionsCopyAndTime` /
    `TestRegenerateRow` / `TestWaitingIndicatorRenders`**（`mdview_test.go`）——
    渲染不 panic；**每条消息的复制按钮**（点击 → 剪贴板为该行文本）与时间显示；
    **重新生成**（删回复及其后行、追加新 streaming 行、id 换新、忙时拒绝）；
    等待首 token 时显示打字点。**`TestParseBlocks`**（`internal/md`）——
    解析器块形（散文跨段合并、有序/无序列表、表格、围栏、标题、引用、分隔线）。
-16. **`TestDirMigration` / `TestSettingsRoundtrip` / `TestWsPrefsRoundtrip` /
+17. **`TestDirMigration` / `TestSettingsRoundtrip` / `TestWsPrefsRoundtrip` /
    `TestSessionsRoundtrip` / `TestLegacyIndexMigration` /
    `TestTranscriptPathSanitize`**（`internal/store`）—— 旧目录迁移链
    （不覆盖新文件、旧目录保留）；settings / workspace / 会话索引 + 每会话转录的

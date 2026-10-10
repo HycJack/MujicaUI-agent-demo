@@ -1,8 +1,9 @@
 package app
 
 // convfixture_test.go builds a representative agent conversation for the
-// layout and screenshot tests. One AI reply is ONE row: its thinking and
-// tool calls fold into the collapsible block, the answer renders below.
+// layout and screenshot tests. One AI reply is ONE row: the process area
+// folds its thinking and tool calls behind a one-line summary (SPEC
+// §7.3.2), the answer renders below.
 
 import (
 	"time"
@@ -18,6 +19,7 @@ func newConversationApp() *app {
 	a.thread.rows = []row{
 		{id: "u1", role: chat.MessageUser, text: "The nightly export failed again. Find out why and fix the job.", at: ago(2 * time.Hour)},
 		{id: "a1", role: chat.MessageAssistant, kind: rowReasoned, at: ago(2*time.Hour - 40*time.Second),
+			doneAt:    ago(2*time.Hour - 10*time.Second),
 			thinkText: "The job died on a quota error at 02:14. Check the last run's log, then raise the cap in jobs/export-nightly.sh.",
 			text:      "The job died on a **quota error** at 02:14 — the archive bucket holds seven days of dumps.\n\nWhat I did:\n\n1. Read the last run's log\n2. Raised the retention cap in `jobs/export-nightly.sh`\n3. Re-ran the export — it passed\n\n| step | result |\n| --- | --- |\n| log tail | quota exceeded |\n| re-run | ok |",
 			tools: []*toolRun{

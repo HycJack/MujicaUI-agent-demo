@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"crux-agent/internal/engine"
@@ -32,20 +33,108 @@ const (
 )
 
 // row is one entry of the thread. One AI reply is ONE row: its thinking,
-// tool calls and text all live here — thinking and tools fold into a
-// collapsible ThinkingBlock, the text renders as markdown once done.
+// tool calls and text all live here — the process area lays the thinking
+// and the tool calls out as a timeline (see thread.go processBlock), the
+// text renders as markdown once done.
 type row struct {
 	id        string
 	role      chat.MessageRole
 	kind      kind
 	text      string
 	llmText   string // what the LLM sees when it differs from text (attached file contents)
-	thinkText string // reasoning text collected while a reply streams
+	thinkText string // all reasoning segments joined (persisted shape)
 	at        time.Time
+	doneAt    time.Time  // when streaming ended; the completed process header's duration
 	tool      *toolRun   // legacy single-tool rows (transcripts stored before the merge)
 	tools     []*toolRun // this reply's tool calls, in execution order
-	thinkOpen bool       // the reply's ThinkingBlock collapse state
+	steps     []step     // the process timeline: reasoning segments and tool calls in order
+	procOpen  bool       // process area (group header) state: open while streaming, folds on completion
 	streaming bool       // the reply is still streaming (text renders plain)
+}
+
+// step is one entry of a reply's process timeline: a stretch of reasoning,
+// an interim message the model wrote after seeing tool results, or one tool
+// invocation, in the order it happened.
+type step struct {
+	think string   // the reasoning segment's full text (other steps leave it empty)
+	text  string   // an interim message segment (other steps leave it empty)
+	tool  *toolRun // nil for reasoning and text steps
+	open  bool     // this step's fold state (not persisted; text steps ignore it)
+}
+
+// setThink lands one reasoning update on the timeline: the segment grows in
+// place while the engine keeps extending it (same turn), and starts a new
+// step once the engine reset it after tool calls — the interleaving DSH
+// renders as reasoning parts between tool calls. thinkText keeps the joined
+// segments for persistence.
+func (r *row) setThink(text string) {
+	if text == "" {
+		return
+	}
+	if n := len(r.steps); n > 0 && r.steps[n-1].tool == nil && r.steps[n-1].text == "" &&
+		strings.HasPrefix(text, r.steps[n-1].think) {
+		r.steps[n-1].think = text
+	} else {
+		r.steps = append(r.steps, step{think: text})
+	}
+	var segs []string
+	for _, s := range r.steps {
+		if s.think != "" {
+			segs = append(segs, s.think)
+		}
+	}
+	r.thinkText = strings.Join(segs, "\n\n")
+}
+
+// setText lands one message update on the timeline, mirroring setThink: the
+// segment grows in place within a turn, and the engine's per-turn reset
+// starts a new segment — an interim reply after tool results. r.text keeps
+// every segment joined with a blank line (the persistence and history shape).
+func (r *row) setText(text string) {
+	if text == "" {
+		return
+	}
+	if n := len(r.steps); n > 0 && r.steps[n-1].tool == nil && r.steps[n-1].think == "" &&
+		strings.HasPrefix(text, r.steps[n-1].text) {
+		r.steps[n-1].text = text
+	} else {
+		r.steps = append(r.steps, step{text: text})
+	}
+	var segs []string
+	for _, s := range r.steps {
+		if s.text != "" {
+			segs = append(segs, s.text)
+		}
+	}
+	r.text = strings.Join(segs, "\n\n")
+}
+
+// answerText is the reply's final answer: the LAST message segment (earlier
+// ones are interim replies rendered in the timeline), or the whole text for
+// rows without segments (loaded transcripts, error rows, hand-built tests).
+// It reports the segment's index in steps, -1 when it fell back to r.text.
+func (r *row) answerText() (string, int) {
+	for i := len(r.steps) - 1; i >= 0; i-- {
+		if r.steps[i].text != "" {
+			return r.steps[i].text, i
+		}
+	}
+	return r.text, -1
+}
+
+// timeline returns the reply's process steps, materializing the legacy
+// shape (one thinking blob, then the tools) once for rows stored before
+// steps existed or built directly by tests.
+func (r *row) timeline() []step {
+	if r.steps == nil {
+		if r.thinkText != "" {
+			r.steps = append(r.steps, step{think: r.thinkText})
+		}
+		for _, t := range r.toolsOf() {
+			r.steps = append(r.steps, step{tool: t})
+		}
+	}
+	return r.steps
 }
 
 // toolRun carries one agent tool invocation for the transcript cards: the
@@ -177,13 +266,31 @@ type LLMSettings struct {
 	ConnectionErr string `json:"-"`
 }
 
+// defaultSystemPrompt is Crux's out-of-the-box prompt, ported from the
+// DeepSeek Harness assembled system prompt: the rules that map to Crux's
+// three tools, with the identity swapped. Lines naming tools Crux does not
+// have were dropped rather than kept — they invite calls to nothing.
+const defaultSystemPrompt = `You are an AI agent powered by Crux.
+
+You are a coding agent.
+
+Check the exit code on every bash result; investigate failures before moving on.
+
+Use the read_file tool — not shell commands like cat — to inspect text files. Read an existing file before overwriting it with write_file, which always takes the complete final content: gather the current content with read_file first instead of guessing it.
+
+Prefer showing the primary results within your final response alongside a brief explanation, and format code in fenced code blocks. Answer in the user's language — concise, concrete, and refer to the repo when relevant.`
+
+// legacySystemPrompt is the pre-DSH default. loadSettings upgrades a stored
+// copy of it to defaultSystemPrompt; a customized prompt passes through.
+const legacySystemPrompt = "You are Crux, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant."
+
 // settingsPaneOpen toggles the right-hand config inspector.
 func (a *app) defaultSettings() LLMSettings {
 	s := LLMSettings{
 		LLMConfig: store.LLMConfig{
 			Provider:     "openai",
 			Model:        "gpt-4o",
-			SystemPrompt: "You are Crux, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant.",
+			SystemPrompt: defaultSystemPrompt,
 			Thinking:     "none",
 		},
 	}

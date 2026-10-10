@@ -91,7 +91,7 @@ func (a *app) send() {
 		row{id: fmt.Sprintf("u%d", userIdx), role: chat.MessageUser, text: text, llmText: llmText, at: now})
 	a.thread.rows = append(a.thread.rows,
 		row{id: fmt.Sprintf("a%d", userIdx+1), role: chat.MessageAssistant, kind: rowReasoned,
-			at: now.Add(time.Millisecond), streaming: true})
+			at: now.Add(time.Millisecond), procOpen: true, streaming: true})
 	a.thread.draft = ""
 	a.thread.list.ScrollToEnd()
 	a.markDirty(a.sessionID) // the user row lands in its transcript file
@@ -160,10 +160,10 @@ func (a *app) startStream(userIdx int, rowID string) {
 		s := &agentStream{app: a, curID: curID}
 		cb := engine.Callbacks{
 			OnThinking: func(text string) {
-				a.redraw(func() { s.setRow(func(r *row) { r.thinkText = text }) })
+				a.redraw(func() { s.setRow(func(r *row) { r.setThink(text) }) })
 			},
 			OnText: func(text string) {
-				a.redraw(func() { s.setRow(func(r *row) { r.text = text }) })
+				a.redraw(func() { s.setRow(func(r *row) { r.setText(text) }) })
 			},
 			OnToolStart: func(callID, name, args string) {
 				a.redraw(func() { a.appendTurnTool(s.curID, callID, name, args) })
@@ -179,11 +179,15 @@ func (a *app) startStream(userIdx int, rowID string) {
 }
 
 // endStreamingRow clears a reply's streaming flag so its text renders as
-// markdown from then on (UI thread).
+// markdown from then on, and folds the process area back to its one-line
+// summary (DSH's collapse-on-completion) with the elapsed time pinned.
 func (a *app) endStreamingRow(id string) {
 	for i := range a.thread.rows {
 		if a.thread.rows[i].id == id {
-			a.thread.rows[i].streaming = false
+			r := &a.thread.rows[i]
+			r.streaming = false
+			r.procOpen = false
+			r.doneAt = time.Now()
 			return
 		}
 	}
@@ -226,7 +230,9 @@ func (a *app) appendTurnTool(rowID, callID, name, args string) {
 		if a.thread.rows[i].id != rowID {
 			continue
 		}
-		a.thread.rows[i].tools = append(a.thread.rows[i].tools, t)
+		r := &a.thread.rows[i]
+		r.tools = append(r.tools, t)
+		r.steps = append(r.steps, step{tool: t}) // the timeline follows execution order
 		a.thread.list.ScrollToEnd()
 		return
 	}
@@ -240,11 +246,14 @@ func (a *app) finishToolRow(callID, result string, isErr bool, dur time.Duration
 			if t.callID != callID {
 				continue
 			}
-			t.state = muiagent.AgentDone
 			t.dur = dur
 			if isErr {
+				// Failed state drives the row's red cross mark; the message
+				// stays for the expanded card.
+				t.state = muiagent.AgentFailed
 				t.errMsg = toolResultText(result)
 			} else {
+				t.state = muiagent.AgentDone
 				t.result = result
 			}
 			switch t.name {
@@ -353,10 +362,13 @@ func (a *app) streamErrorRow(id string, err error) {
 func (a *app) finishStream(idx int) {
 	if a.redraw == nil {
 		if len(a.thread.rows) > idx {
-			if a.thread.rows[idx].text == "" {
-				a.thread.rows[idx].text = "(no LLM backend off-window)"
+			r := &a.thread.rows[idx]
+			if r.text == "" {
+				r.text = "(no LLM backend off-window)"
 			}
-			a.thread.rows[idx].streaming = false
+			r.streaming = false
+			r.procOpen = false // fold like a real completion
+			r.doneAt = time.Now()
 		}
 		a.llm.Busy = false
 		a.clearCancel()

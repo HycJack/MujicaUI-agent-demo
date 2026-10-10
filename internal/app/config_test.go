@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"crux-agent/internal/store"
+
 	"github.com/egoist/mygo/ui"
 )
 
@@ -34,6 +36,37 @@ func TestSettingsPersistenceRoundtrip(t *testing.T) {
 		b.llm.APIKey != "sk-test" || b.llm.BaseURL != "https://api.example.com/v1" ||
 		b.llm.SystemPrompt != "You are terse." || b.llm.Thinking != "high" {
 		t.Fatalf("loaded settings drifted: %+v", b.llm)
+	}
+}
+
+func TestSettingsPromptMigration(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, prompt string) string {
+		path := filepath.Join(dir, name)
+		body, err := json.Marshal(store.LLMConfig{Provider: "openai", SystemPrompt: prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	// A stored copy of the old default upgrades to the current one.
+	a := newApp()
+	a.configPath = write("legacy.json", legacySystemPrompt)
+	a.loadSettings()
+	if a.llm.SystemPrompt != defaultSystemPrompt {
+		t.Fatalf("legacy default not upgraded: %q", a.llm.SystemPrompt)
+	}
+
+	// A customized prompt passes through untouched.
+	b := newApp()
+	b.configPath = write("custom.json", "Answer in limericks.")
+	b.loadSettings()
+	if b.llm.SystemPrompt != "Answer in limericks." {
+		t.Fatalf("custom prompt clobbered: %q", b.llm.SystemPrompt)
 	}
 }
 

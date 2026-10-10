@@ -47,9 +47,11 @@ type Message struct {
 	At   time.Time
 }
 
-// Callbacks receive the loop's events. Text and thinking arrive as the
-// FULL accumulated text so far (turns join with a blank line), so the
-// caller can just store the string.
+// Callbacks receive the loop's events. Thinking and text are each turn's
+// OWN accumulated buffer (the loop resets both on every message start), so
+// a caller that wants the full reply joins the segments itself — a turn's
+// text that follows tool results is the model's interim reply, which the
+// UI lays out between the tool calls.
 type Callbacks struct {
 	OnThinking  func(text string)
 	OnText      func(text string)
@@ -89,18 +91,15 @@ func Run(ctx context.Context, cfg Config, history []Message, cb Callbacks) error
 	stream := agent.AgentLoop(ctx, msgs, loopCfg)
 
 	var think, body strings.Builder
-	started := false
 	toolStart := map[string]time.Time{}
 	_, err = stream.ForEach(ctx, func(evt agent.AgentEvent) error {
 		switch e := evt.(type) {
 		case agent.EventMessageStart:
-			// Later turns (after tool results) keep filling the same
-			// reply: their text joins the body after a blank line.
+			// Later turns (after tool results) keep filling the same reply,
+			// but each one's thinking and text start fresh: the caller
+			// joins the segments, keeping interim replies distinct.
 			think.Reset()
-			if started && body.Len() > 0 {
-				body.WriteString("\n\n")
-			}
-			started = true
+			body.Reset()
 		case agent.EventMessageUpdate:
 			switch ev := e.AssistantEvent.(type) {
 			case piai.EventThinkingDelta:
