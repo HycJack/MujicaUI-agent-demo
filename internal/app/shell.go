@@ -7,6 +7,7 @@ package app
 // dashboard's shell folds together.
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -87,12 +88,17 @@ func (a *app) titlebar(c *ui.Context, k tokensT) {
 	})
 }
 
-// sidebar is the session tree: one level per workspace directory, its
-// sessions nested beneath it — the way Codex-style consoles group projects.
+// sidebar is the session tree under a New chat button: sessions group by
+// workspace directory — the way Codex-style consoles group projects — but
+// the home directory is never shown as a group; its sessions sit flat.
 // Clicking a workspace toggles it open; clicking a session opens it (and
 // switches workspace first when it belongs elsewhere).
 func (a *app) sidebar(c *ui.Context, k tokensT) {
 	ui.Column(c).Width(260).Shrink(0).Background(k.Surface).Padding(10, 10, 10).Gap(8).Children(func() {
+		newBtn := ui.PrimaryButton(c, "New chat").FillWidth()
+		if newBtn.Clicked() {
+			a.newThread()
+		}
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Workspaces").FontSize(11).TextColor(k.TextMuted).Grow(1)
 			a.iconToggle(c, k, "plus", "Open workspace…", a.openWsDialog)
@@ -114,26 +120,43 @@ func (a *app) sidebar(c *ui.Context, k tokensT) {
 			ui.Icon(c, icons.Must("folder")).FontSize(14).TextColor(k.TextMuted)
 			ui.Text(c, "Open workspace…").FontSize(12).TextColor(k.TextMuted)
 		})
-		newBtn := ui.PrimaryButton(c, "New chat")
-		if newBtn.Clicked() {
-			a.newThread()
-		}
 	})
 }
 
 // sessionTreeRoots lists the tree's top level: the current workspace first,
-// then the recents, each as a "ws:<path>" key.
+// then the recents — the home directory never appears as a group; when it
+// is the current root its sessions are listed flat instead.
 func (a *app) sessionTreeRoots() []string {
 	out := []string{}
-	if a.ws.root != "" {
+	homeRoot := isHomeDir(a.ws.root)
+	if a.ws.root != "" && !homeRoot {
 		out = append(out, "ws:"+a.ws.root)
 	}
 	for _, r := range a.recents {
-		if r != a.ws.root {
+		if r != a.ws.root && !isHomeDir(r) {
 			out = append(out, "ws:"+r)
 		}
 	}
+	if homeRoot {
+		for _, s := range a.sessions {
+			if s.ws == a.ws.root {
+				out = append(out, "sess:"+s.id)
+			}
+		}
+	}
 	return out
+}
+
+// isHomeDir reports whether path is the user's home directory.
+func isHomeDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	return filepath.Clean(path) == filepath.Clean(home)
 }
 
 // sessionTreeChildren returns a workspace's sessions ("sess:<id>") or nil
