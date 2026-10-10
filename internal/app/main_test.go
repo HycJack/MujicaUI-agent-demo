@@ -130,22 +130,19 @@ func TestPaletteCommands(t *testing.T) {
 	}
 }
 
-// The provider dialog edits the backend live: choosing a provider that has no
-// such model rebinds to a valid one and re-seeds defaults.
+// The provider dialog edits the backend live: no model ships by default,
+// and switching to a provider whose list does not carry the current id
+// drops it rather than picking one automatically.
 func TestProviderRebind(t *testing.T) {
 	a := newApp()
-	if a.llm.Provider == "" || a.llm.Model == "" {
-		t.Fatal("default backend should have a provider and model")
+	if a.llm.Provider == "" || a.llm.Model != "" {
+		t.Fatalf("default backend: provider %q model %q, want a provider and no model", a.llm.Provider, a.llm.Model)
 	}
-	prevModel := a.llm.Model
+	a.llm.Model = "gpt-4o"
 	a.llm.Provider = "anthropic" // claude models, no gpt ids
 	a.rebindModel()
-	if a.llm.Model == prevModel && prevModel != "" {
-		// only valid if the id happens to collide; anthropic ids differ
-		t.Fatalf("model %q not rebound after provider switch", a.llm.Model)
-	}
-	if a.llm.Model == "" {
-		t.Fatal("rebind should pick the first anthropic model")
+	if a.llm.Model != "" {
+		t.Fatalf("a model unknown to the provider was kept: %q", a.llm.Model)
 	}
 	// reasoning re-seeds to none on non-reasoning targets is allowed either
 	// way; just assert the thinking value is one of the known levels.

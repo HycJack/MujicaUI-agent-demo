@@ -254,11 +254,15 @@ func (a *app) composerAttach(c *ui.Context, k tokensT) {
 }
 
 // composerModel is the toolbar's model picker: the active model's short
-// name opens a menu of the provider's models.
+// name opens a menu of the provider's models. No model is chosen yet —
+// the trigger says so and the menu is still there to pick from.
 func (a *app) composerModel(c *ui.Context, k tokensT) {
 	label := a.llm.Model
 	if m, err := engine.ModelInfoOf(a.llm.Provider, a.llm.Model); err == nil && m.Name != "" {
 		label = m.Name
+	}
+	if strings.TrimSpace(label) == "" {
+		label = "Select a model"
 	}
 	opts := a.modelOptions()
 	overlay.DropdownMenu(c, label, overlay.DropdownMenuOptions{Icon: icons.Must("bot"), Label: "Model"}, func(m *overlay.PopupMenu) {

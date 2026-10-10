@@ -376,34 +376,24 @@ func (a *app) fetchModels() {
 				return
 			}
 			a.provView.fetched = ids
-			if a.llm.Model == "" && len(ids) > 0 {
-				a.llm.Model = ids[0]
-			}
 		})
 	}()
 }
 
 func (a *app) rebindModel() {
-	// Custom endpoint: the model comes from the fetched list (or is typed), so
-	// only keep it if it is known, else fall back to the first fetched or clear.
+	// Custom endpoint: the model comes from the fetched list (or is typed),
+	// so only keep it if it is known; no model is picked automatically.
 	if a.llm.Provider == openaiCompat {
 		if a.llm.Model != "" && !slices.Contains(a.provView.fetched, a.llm.Model) {
-			if len(a.provView.fetched) > 0 {
-				a.llm.Model = a.provView.fetched[0]
-			} else {
-				a.llm.Model = ""
-			}
+			a.llm.Model = ""
 		}
 		return
 	}
+	// A known provider: keep the current model only if it is still on the
+	// provider's list; a model that is not is dropped — none is auto-picked.
 	ms := a.modelOptions()
-	if len(ms) == 0 {
+	if a.llm.Model != "" && !slices.ContainsFunc(ms, func(o input.SelectOption[string]) bool { return o.Value == a.llm.Model }) {
 		a.llm.Model = ""
-		return
-	}
-	// Keep the same id if still present, else pick the first model.
-	if !slices.ContainsFunc(ms, func(o input.SelectOption[string]) bool { return o.Value == a.llm.Model }) {
-		a.llm.Model = ms[0].Value
 	}
 	a.applyModelDefaults()
 }

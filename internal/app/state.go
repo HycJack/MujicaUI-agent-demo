@@ -186,11 +186,12 @@ func (a *app) defaultSettings() LLMSettings {
 	s := LLMSettings{
 		LLMConfig: store.LLMConfig{
 			Provider:     "openai",
-			Model:        "gpt-4o",
 			SystemPrompt: "You are Crux, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant.",
 			Thinking:     "none",
 		},
 	}
+	// No model ships by default: the user picks one in settings, and the
+	// composer's picker keeps offering the provider's list.
 	s.Thinking = engine.ThinkDefault(s.Provider, s.Model)
 	return s
 }

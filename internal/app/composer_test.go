@@ -23,10 +23,10 @@ func TestComposerModelPickerMenu(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.view, 1100, 760)
 	tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
-	if err := tt.Click("GPT-4o"); err != nil {
+	if err := tt.Click("Select a model"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"GPT-4o Mini", "o3", "o4-mini"} {
+	for _, want := range []string{"GPT-4o", "GPT-4o Mini", "o3", "o4-mini"} {
 		if !tt.HasText(want) {
 			t.Fatalf("model %q not offered: %q", want, tt.Texts())
 		}
@@ -43,8 +43,8 @@ func TestComposerModelPickerMenu(t *testing.T) {
 // model's capability.
 func TestComposerSetModelAppliesDefaults(t *testing.T) {
 	a := newApp()
-	if a.llm.Model != "gpt-4o" {
-		t.Fatalf("default model %q", a.llm.Model)
+	if a.llm.Model != "" {
+		t.Fatalf("a default model ships: %q", a.llm.Model)
 	}
 	a.setModel("o3")
 	if a.llm.Model != "o3" {
