@@ -11,11 +11,11 @@ import (
 	"crux-agent/internal/engine"
 	"crux-agent/internal/fsutil"
 	"crux-agent/internal/store"
-	"github.com/ZacharyZhang-NY/MujicaUI/agent"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/code"
-	"github.com/ZacharyZhang-NY/MujicaUI/data"
-	"github.com/ZacharyZhang-NY/MujicaUI/git"
+	"github.com/HycJack/MujicaUI/agent"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/code"
+	"github.com/HycJack/MujicaUI/data"
+	"github.com/HycJack/MujicaUI/git"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -176,6 +176,10 @@ type LLMSettings struct {
 	ProviderOK    bool   `json:"-"`
 	ConnectionErr string `json:"-"`
 }
+
+// SandboxOn reports whether bash runs inside the sandbox boundary;
+// the unset pointer means the default, on.
+func (s *LLMSettings) SandboxOn() bool { return s.Sandbox == nil || *s.Sandbox }
 
 // settingsPaneOpen toggles the right-hand config inspector.
 func (a *app) defaultSettings() LLMSettings {

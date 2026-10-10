@@ -8,16 +8,20 @@ package engine
 // model context.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/HycJack/pi-ai-go/core"
+
+	"crux-agent/internal/sandbox"
 )
 
 const (
@@ -25,8 +29,21 @@ const (
 	toolFileCap = 64 * 1024 // read_file content cap
 )
 
+// SandboxProvider returns the platform sandbox when enabled. The
+// honesty rule lives in the provider: a platform without a backend
+// reports an error as the tool's result — it never runs unsandboxed
+// while the switch is on.
+func SandboxProvider(enabled bool) sandbox.Sandbox {
+	if !enabled {
+		return nil
+	}
+	return sandbox.New()
+}
+
 // Tools builds the toolset the agent loop runs with, rooted at workdir.
-func Tools(workdir string) []core.AgentTool {
+// A non-nil sb wraps bash commands in the sandbox boundary; nil runs
+// them as plain child processes.
+func Tools(workdir string, sb sandbox.Sandbox) []core.AgentTool {
 	return []core.AgentTool{
 		{
 			Name:  "bash",
@@ -39,7 +56,7 @@ func Tools(workdir string) []core.AgentTool {
   "required": ["command"]
 }`),
 			Execute: func(ctx context.Context, _ string, params json.RawMessage, _ func(json.RawMessage)) (core.AgentToolResult, error) {
-				return toolBash(ctx, workdir, params)
+				return toolBash(ctx, workdir, sb, params)
 			},
 		},
 		{
@@ -119,8 +136,11 @@ func textResult(text string, isErr bool) core.AgentToolResult {
 }
 
 // toolBash runs a shell command in the workspace. The command line goes
-// through the platform shell so pipes and redirections work.
-func toolBash(_ context.Context, workdir string, params json.RawMessage) (core.AgentToolResult, error) {
+// through the platform shell so pipes and redirections work. With a
+// sandbox, the command runs inside the workspace-scoped boundary —
+// never silently unsandboxed; a missing backend surfaces as the tool's
+// error.
+func toolBash(ctx context.Context, workdir string, sb sandbox.Sandbox, params json.RawMessage) (core.AgentToolResult, error) {
 	p, err := decodeParams(params)
 	if err != nil {
 		return textResult(err.Error(), true), nil
@@ -128,20 +148,69 @@ func toolBash(_ context.Context, workdir string, params json.RawMessage) (core.A
 	if strings.TrimSpace(p.Command) == "" {
 		return textResult("a command is required", true), nil
 	}
-	env := core.NewDefaultExecutionEnvWithDir(workdir)
 	shell, flag := ShellCommand()
-	stdout, stderr, execErr := env.Exec(shell, []string{flag, p.Command}, workdir)
-	out := strings.TrimRight(stdout, "\n")
-	if strings.TrimSpace(stderr) != "" {
-		if out != "" {
-			out += "\n"
-		}
-		out += strings.TrimRight(stderr, "\n")
+	cmd, cleanup, err := shellCommand(ctx, sb, workdir, shell, flag, p.Command)
+	if err != nil {
+		return textResult(err.Error(), true), nil
 	}
+	defer cleanup()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	execErr := cmd.Run()
+	text := strings.TrimRight(out.String(), "\n")
 	details, _ := json.Marshal(map[string]any{"command": p.Command, "exit": ExitCode(execErr)})
-	res := textResult(out, execErr != nil)
+	res := textResult(text, execErr != nil)
 	res.Details = details
 	return res, nil
+}
+
+// shellCommand builds the command for one bash invocation. Without a
+// sandbox it is a plain child process; with one, the scratch directory
+// is created here — the provider owns the boundary, the engine owns
+// the child's environment and the cleanup order. Either way the child
+// leads its own process group: a stop kills the whole tree, and
+// WaitDelay bounds the output pipes a surviving grandchild would
+// otherwise hold open forever.
+func shellCommand(ctx context.Context, sb sandbox.Sandbox, workdir, name, arg string, commandLine string) (*exec.Cmd, func(), error) {
+	if sb == nil {
+		cmd := exec.CommandContext(ctx, name, arg, commandLine)
+		cmd.Dir = workdir
+		procGroupAttr(cmd)
+		return cmd, func() {}, nil
+	}
+	scratch, err := os.MkdirTemp("", "crux-sandbox-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { os.RemoveAll(scratch) }
+	if err := os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	cmd, wrapCleanup, err := sb.Command(ctx, sandbox.Boundary{
+		Workdir: sandbox.Canonical(workdir),
+		Scratch: scratch,
+		Network: "deny",
+	}, name, arg, commandLine)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	if wrapCleanup != nil {
+		inner := cleanup
+		cleanup = func() { wrapCleanup(); inner() }
+	}
+	cmd.Dir = workdir
+	procGroupAttr(cmd)
+	// The child sees a minimal environment pointing at the boundary's
+	// writable places, so caches and temp files land inside the grants.
+	cmd.Env = []string{
+		"HOME=" + scratch,
+		"TMPDIR=" + filepath.Join(scratch, "tmp"),
+		"PATH=" + os.Getenv("PATH"),
+	}
+	return cmd, cleanup, nil
 }
 
 // ShellCommand picks the platform shell wrapper for the bash tool.

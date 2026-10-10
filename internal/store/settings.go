@@ -20,6 +20,10 @@ type LLMConfig struct {
 	BaseURL      string `json:"baseUrl,omitempty"`
 	SystemPrompt string `json:"systemPrompt"`
 	Thinking     string `json:"thinking"`
+	// Sandbox wraps bash commands in the workspace-scoped execution
+	// boundary. A nil pointer means the default (on), so settings
+	// written before the field existed keep the sandbox active.
+	Sandbox *bool `json:"sandbox,omitempty"`
 }
 
 // LoadSettings reads the settings file; a missing file returns the zero

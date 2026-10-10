@@ -4,8 +4,8 @@ package app
 // the library's theme rather than a hand-rolled palette.
 
 import (
-	"github.com/ZacharyZhang-NY/MujicaUI/core"
-	"github.com/ZacharyZhang-NY/MujicaUI/theme"
+	"github.com/HycJack/MujicaUI/core"
+	"github.com/HycJack/MujicaUI/theme"
 	"github.com/egoist/mygo/ui"
 )
 

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 
 	"crux-agent/internal/store"
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
-	"github.com/ZacharyZhang-NY/MujicaUI/input"
-	"github.com/ZacharyZhang-NY/MujicaUI/overlay"
+	"github.com/HycJack/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/input"
+	"github.com/HycJack/MujicaUI/overlay"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -40,7 +40,7 @@ func (a *app) workspaceDialog(c *ui.Context) {
 func (a *app) wsDialogBody(c *ui.Context) {
 	k := tokens(c)
 	ui.Column(c).Gap(14).Children(func() {
-		input.FormField(c, "Directory", input.FormFieldOptions{Description: "An absolute path to an existing folder."}, func() *ui.Element {
+		input.FormField(c, "Directory", input.FormFieldOptions{Description: "An absolute path to an existing folder."}, func() ui.Element {
 			return input.InputGroup(c, &a.wsPathField, input.InputGroupOptions{Placeholder: store.HomeDir(), Label: "Directory"}).Input
 		})
 		ui.Text(c, "Recent workspaces").FontSize(11).TextColor(k.TextMuted)

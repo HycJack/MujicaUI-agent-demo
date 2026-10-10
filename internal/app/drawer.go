@@ -10,9 +10,9 @@ package app
 import (
 	"crux-agent/internal/fsutil"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/code"
-	"github.com/ZacharyZhang-NY/MujicaUI/git"
-	"github.com/ZacharyZhang-NY/MujicaUI/overlay"
+	"github.com/HycJack/MujicaUI/code"
+	"github.com/HycJack/MujicaUI/git"
+	"github.com/HycJack/MujicaUI/overlay"
 	"github.com/egoist/mygo/ui"
 )
 

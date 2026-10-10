@@ -9,18 +9,21 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/HycJack/pi-ai-go/core"
+
+	"crux-agent/internal/sandbox"
 )
 
 // toolByName finds one tool's Execute in the toolset rooted at workdir.
-func toolByName(t *testing.T, workdir, name string) func(ctx context.Context, id string, params json.RawMessage, push func(json.RawMessage)) (core.AgentToolResult, error) {
+func toolByName(t *testing.T, workdir string, sb sandbox.Sandbox, name string) func(ctx context.Context, id string, params json.RawMessage, push func(json.RawMessage)) (core.AgentToolResult, error) {
 	t.Helper()
-	for _, tl := range Tools(workdir) {
+	for _, tl := range Tools(workdir, sb) {
 		if tl.Name == name {
 			return tl.Execute
 		}
@@ -49,7 +52,7 @@ func resultText(t *testing.T, v any) string {
 
 func TestToolsBash(t *testing.T) {
 	dir := t.TempDir()
-	bash := toolByName(t, dir, "bash")
+	bash := toolByName(t, dir, nil, "bash")
 	// A portable command: echo works under both cmd and sh.
 	res, err := bash(context.Background(), "c1", json.RawMessage(`{"command":"echo crux-ok"}`), nil)
 	if err != nil {
@@ -79,8 +82,8 @@ func TestToolsBash(t *testing.T) {
 
 func TestToolsReadWrite(t *testing.T) {
 	dir := t.TempDir()
-	read := toolByName(t, dir, "read_file")
-	write := toolByName(t, dir, "write_file")
+	read := toolByName(t, dir, nil, "read_file")
+	write := toolByName(t, dir, nil, "write_file")
 	// Reading a missing file is an error result, not a panic.
 	res, err := read(context.Background(), "r1", json.RawMessage(`{"path":"nope.txt"}`), nil)
 	if err != nil || !res.IsError {
@@ -128,5 +131,57 @@ func TestShellWrapper(t *testing.T) {
 	}
 	if shell, flag := ShellCommand(); shell != "sh" || flag != "-c" {
 		t.Fatalf("unix shell = %s %s", shell, flag)
+	}
+}
+
+// TestToolsBashSandboxed asserts the wiring: with the sandbox on, the
+// bash tool still runs the command (inside the boundary) and reports
+// exit codes; the platform's grant enforcement itself is covered by
+// the sandbox package's live tests.
+func TestToolsBashSandboxed(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("no sandbox backend on this platform")
+	}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("bwrap"); err != nil {
+			t.Skip("no bwrap on PATH")
+		}
+	}
+	dir := t.TempDir()
+	bash := toolByName(t, dir, sandbox.New(), "bash")
+	res, err := bash(context.Background(), "s1", json.RawMessage(`{"command":"echo sandbox-ok"}`), nil)
+	if err != nil {
+		t.Fatalf("sandboxed bash execute: %v", err)
+	}
+	if res.IsError || !strings.Contains(resultText(t, res), "sandbox-ok") {
+		t.Fatalf("sandboxed bash broken: isError=%v out=%s", res.IsError, resultText(t, res))
+	}
+	// A failing command still reports its exit code through the wrapper.
+	res, err = bash(context.Background(), "s2", json.RawMessage(`{"command":"exit 7"}`), nil)
+	if err != nil || !res.IsError {
+		t.Fatalf("sandboxed failing command: err=%v isError=%v", err, res.IsError)
+	}
+	var details struct {
+		Exit int `json:"exit"`
+	}
+	if err := json.Unmarshal(res.Details, &details); err != nil || details.Exit != 7 {
+		t.Fatalf("sandboxed exit code not reported: details=%s err=%v", res.Details, err)
+	}
+}
+
+// TestSandboxProviderWiring asserts the switch: off is nil (plain
+// child process), on is the platform provider.
+func TestSandboxProviderWiring(t *testing.T) {
+	if SandboxProvider(false) != nil {
+		t.Fatal("sandbox off must not install a provider")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		if SandboxProvider(true) == nil {
+			t.Fatal("sandbox on must install a provider")
+		}
+		return
+	}
+	if SandboxProvider(true) == nil {
+		t.Fatal("sandbox on must install a provider")
 	}
 }

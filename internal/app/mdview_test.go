@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/chat"
 	"github.com/egoist/mygo/ui"
 )
 

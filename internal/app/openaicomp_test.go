@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/input"
+	"github.com/HycJack/MujicaUI/input"
 )
 
 // The app projects its settings onto the engine's Config: provider, model,

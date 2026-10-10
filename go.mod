@@ -5,9 +5,9 @@ go 1.27.1
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
+	github.com/HycJack/MujicaUI v0.0.0-20261010161305-8ca94854770e
 	github.com/HycJack/pi-ai-go v0.3.0
-	github.com/ZacharyZhang-NY/MujicaUI v0.0.0-20261005202320-8c561ba15ede
-	github.com/egoist/mygo v0.2.18
+	github.com/egoist/mygo v0.3.4
 )
 
 require (

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/git"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/git"
 	"github.com/egoist/mygo/ui"
 )
 

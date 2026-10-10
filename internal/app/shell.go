@@ -12,10 +12,10 @@ import (
 	"strings"
 
 	"crux-agent/internal/fsutil"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/data"
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
-	"github.com/ZacharyZhang-NY/MujicaUI/layout"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/data"
+	"github.com/HycJack/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/layout"
 	"github.com/egoist/mygo/ui"
 )
 

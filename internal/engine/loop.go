@@ -30,6 +30,7 @@ type Config struct {
 	SystemPrompt string
 	Thinking     string // "" / none / low / medium / high / xhigh
 	Workdir      string // the tools' root and the exec environment's dir
+	Sandbox      bool   // run bash inside the workspace-scoped sandbox (on by default)
 }
 
 // Role says who a history message came from.
@@ -81,7 +82,7 @@ func Run(ctx context.Context, cfg Config, history []Message, cb Callbacks) error
 	loopCfg := agent.AgentLoopConfig{
 		Model:               model,
 		SystemPrompt:        cfg.SystemPrompt,
-		Tools:               Tools(cfg.Workdir),
+		Tools:               Tools(cfg.Workdir, SandboxProvider(cfg.Sandbox)),
 		ToolExecution:       core.ToolExecSequential,
 		ExecEnv:             core.NewDefaultExecutionEnvWithDir(cfg.Workdir),
 		SimpleStreamOptions: streamOptions(cfg),

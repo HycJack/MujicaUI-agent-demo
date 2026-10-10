@@ -23,8 +23,8 @@ import (
 
 	"crux-agent/internal/engine"
 	"crux-agent/internal/fsutil"
-	muiagent "github.com/ZacharyZhang-NY/MujicaUI/agent"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
+	muiagent "github.com/HycJack/MujicaUI/agent"
+	"github.com/HycJack/MujicaUI/chat"
 )
 
 // engineConfig projects the app's LLM settings onto the engine's Config.
@@ -37,6 +37,7 @@ func (a *app) engineConfig() engine.Config {
 		SystemPrompt: a.llm.SystemPrompt,
 		Thinking:     a.llm.Thinking,
 		Workdir:      a.ws.root,
+		Sandbox:      a.llm.SandboxOn(),
 	}
 }
 

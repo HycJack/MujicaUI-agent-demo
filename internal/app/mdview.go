@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"crux-agent/internal/md"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/theme"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/theme"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -58,7 +58,7 @@ func mdBlockEl(c *ui.Context, b *md.Block, k tokensT) {
 				}
 				ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
 					ui.Text(c, mark).FontSize(14).TextColor(k.TextMuted).MinWidth(14).Shrink(0)
-					mdProse(c, []string{it.Text}, k, func(e *ui.Element) { e.Grow(1).MinWidth(0) })
+					mdProse(c, []string{it.Text}, k, func(e ui.Element) { e.Grow(1).MinWidth(0) })
 				})
 			}
 		})
@@ -67,7 +67,7 @@ func mdBlockEl(c *ui.Context, b *md.Block, k tokensT) {
 			ui.Box(c).Width(2).Background(k.Border)
 			ui.Column(c).Gap(4).Grow(1).MinWidth(0).Children(func() {
 				for _, q := range strings.Split(b.Text, "\n") {
-					mdProse(c, []string{q}, k, func(e *ui.Element) { e.TextColor(k.TextMuted) })
+					mdProse(c, []string{q}, k, func(e ui.Element) { e.TextColor(k.TextMuted) })
 				}
 			})
 		})
@@ -118,7 +118,7 @@ func mdTableEl(c *ui.Context, b *md.Block, k tokensT) {
 					weight = 600
 				}
 				cell.Children(func() {
-					mdProse(c, []string{text}, k, func(e *ui.Element) { e.FontWeight(weight) })
+					mdProse(c, []string{text}, k, func(e ui.Element) { e.FontWeight(weight) })
 				})
 			}
 		}
@@ -130,7 +130,7 @@ func mdTableEl(c *ui.Context, b *md.Block, k tokensT) {
 // selectable editor receives presses), the element form when it does —
 // a link is a clickable element and cannot be a span. style tweaks the
 // element in either form.
-func mdProse(c *ui.Context, lines []string, k tokensT, style func(*ui.Element)) {
+func mdProse(c *ui.Context, lines []string, k tokensT, style func(ui.Element)) {
 	if mdHasLink(lines) {
 		e := ui.RichText(c).Selectable().Children(func() {
 			for i, l := range lines {

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/agent"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/agent"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/icons"
 	"github.com/egoist/mygo/ui"
 )
 

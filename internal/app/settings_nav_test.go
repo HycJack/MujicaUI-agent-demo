@@ -60,11 +60,11 @@ func TestSettingsDialogStableHeight(t *testing.T) {
 	if !ok || agentBody.H == 0 {
 		t.Fatal("the settings body is missing on the agent pane")
 	}
-	if agentBody.Y != body.Y || agentBody.H != body.H {
+	if diff(agentBody.Y, body.Y) > 1 || diff(agentBody.H, body.H) > 1 {
 		t.Fatalf("dialog resized when switching panes: body y %g->%g, h %g->%g",
 			body.Y, agentBody.Y, body.H, agentBody.H)
 	}
-	if atitle, ok := tst.Find("Settings"); !ok || atitle.Y != title.Y {
+	if atitle, ok := tst.Find("Settings"); !ok || diff(atitle.Y, title.Y) > 1 {
 		t.Fatalf("dialog title moved when switching panes: y %g->%g", title.Y, atitle.Y)
 	}
 

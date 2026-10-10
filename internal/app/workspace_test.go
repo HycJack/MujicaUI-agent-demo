@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"crux-agent/internal/fsutil"
-	"github.com/ZacharyZhang-NY/MujicaUI/data"
+	"github.com/HycJack/MujicaUI/data"
 	"github.com/egoist/mygo/ui"
 )
 

@@ -3,9 +3,14 @@
 **Crux** (module *crux-agent*) is a Codex-style coding-agent desktop app
 built on [MyGo](https://github.com/egoist/mygo) — a native, GPU-drawn UI
 toolkit with **no WebView, no HTML, no JavaScript** — and
-[MujicaUI](https://github.com/ZacharyZhang-NY/MujicaUI), its per-category
-component library. Conversations stream from real LLM backends through
-[pi-ai-go](https://github.com/HycJack/pi-ai-go).
+[MujicaUI](https://github.com/HycJack/MujicaUI), its per-category
+component library (this fork of
+[ZacharyZhang-NY/MujicaUI](https://github.com/ZacharyZhang-NY/MujicaUI)
+migrates the library to MyGo v0.3's value-type Element API). Conversations
+stream from real LLM backends through
+[pi-ai-go](https://github.com/HycJack/pi-ai-go), and bash commands run
+inside a workspace-scoped sandbox (Seatbelt on macOS, bubblewrap on
+Linux).
 
 **Crux**（模块名 **crux-agent**，前身 MujicaUI Agent Demo / Atlas）是一个
 Codex 风格的编码 Agent 桌面应用：用 MyGo 原生 GPU 自绘 UI 工具包与 MujicaUI
@@ -139,6 +144,6 @@ MYGO_UI_SHOTS=screenshots go test ./internal/app -run TestScreenshots
 ## Related 相关项目
 
 - [MyGo](https://github.com/egoist/mygo) —— 原生 GPU 自绘 UI 与窗口运行时
-- [MujicaUI](https://github.com/ZacharyZhang-NY/MujicaUI) —— MyGo 组件库（一个组件类别一个包）
+- [MujicaUI](https://github.com/HycJack/MujicaUI) —— MyGo 组件库（一个组件类别一个包；本仓库使用已迁移到 mygo v0.3 值类型 API 的 fork）
 - [pi-ai-go](https://github.com/HycJack/pi-ai-go) —— 统一多模型 LLM SDK
 - [mygo-dashboard](https://github.com/HycJack/mygo-dashboard) —— 同一技术栈的组件画廊
