@@ -1,5 +1,7 @@
 /build/
 /.mygo/
+/.gocache/
+/.gopath/
 mygo_windows_*.syso
 *.exe
 *.exe~

@@ -85,4 +85,15 @@ smoke test (claude_live_test.go) is opt-in (CRUX_LIVE_CLAUDE=1, 8-min budget) an
 whenever the gateway is up; its failure message names the reply text so an API outage reads
 clearly. Cost if wrong: none in CI (skips by default); the smoke stays red only while the
 local gateway is down.
+POST-REVIEW FIX (commit 4f490bf): the live run exposed a termination-semantics bug — the CLI
+exits 1 right after its result line on an error turn, and RunClaude was returning that raw
+exit status as the turn's error, clobbering the reply (the API-error text had already
+streamed and the note said Stopped). Ruling: a turn that saw its result is SETTLED — nil
+regardless of the exit code (fake-CLI test TestClaudeResultSettlesDespiteExitCode pins it).
+Whole-branch review done: diff fe72b3b..HEAD re-read (loop.go dispatch + gate wiring,
+claude.go termination order, approval.go threading — all a.pending accesses on the UI
+thread; streamRowID set before goroutine start, cleared after Run returns, no overlap);
+largest file claude_events.go 397 lines (<500); .gitignore gained /.gocache/ and /.gopath/
+(repo-local toolchain caches, untracked otherwise).
+
 
