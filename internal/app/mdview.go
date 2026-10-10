@@ -1,8 +1,8 @@
 package app
 
-// mdview.go renders parsed markdown as SELECTABLE native text: every
-// prose run, list item, heading, quote and table cell is a selectable
-// element, so drag-select and copy work on reply content (MujicaUI's
+// mdview.go renders parsed markdown as native text inside ONE selectable
+// container, so drag-select and copy span the whole reply — headings,
+// lists, tables and prose share a selection domain (MujicaUI's
 // MarkdownView builds unselectable elements and hides its parser behind
 // an internal package, so Crux carries this adapted renderer — the
 // block dispatch follows the mygo-agent reference renderer).
@@ -25,9 +25,14 @@ type mdParsed struct {
 
 // mdView renders src as selectable markdown. Blocks parse once per
 // element identity and rebuild as native elements each frame.
+//
+// Selectable sits on the container, not on the paragraphs: one selection
+// domain for the whole reply, so a drag selects across headings, lists
+// and tables. The code block keeps its own (a component with its own
+// copy affordance); mygo lets a nested Selectable provide its own.
 func mdView(c *ui.Context, src string) {
 	k := tokens(c)
-	root := ui.Column(c).Gap(6).MinWidth(0)
+	root := ui.Column(c).Gap(6).MinWidth(0).Selectable()
 	st := ui.Local(root, "md", func() mdParsed { return mdParsed{src: src, blocks: md.Parse(src)} })
 	if st.src != src {
 		*st = mdParsed{src: src, blocks: md.Parse(src)}
@@ -41,12 +46,53 @@ func mdView(c *ui.Context, src string) {
 	})
 }
 
+// mdPlain extracts a reply's prose for an accessibility label: the
+// parsed blocks' text without the markdown furniture, inline marks
+// included.
+func mdPlain(src string) string {
+	var sb strings.Builder
+	flush := func(lines ...string) {
+		for i, l := range lines {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			for _, sp := range mdSpans(l, tokensT{}) {
+				sb.WriteString(sp.Text)
+			}
+		}
+	}
+	for _, b := range md.Parse(src) {
+		switch b.Kind {
+		case md.KindHeading, md.KindPara:
+			flush(b.Text)
+		case md.KindQuote:
+			flush(strings.Split(b.Text, "\n")...)
+		case md.KindList:
+			for _, it := range b.Items {
+				flush(it.Text)
+			}
+		case md.KindCode:
+			sb.WriteString(b.Text)
+			sb.WriteByte('\n')
+		case md.KindTable:
+			sb.WriteString(strings.Join(b.Header, ", "))
+			sb.WriteByte('\n')
+			for _, r := range b.Rows {
+				sb.WriteString(strings.Join(r, ", "))
+				sb.WriteByte('\n')
+			}
+		}
+		sb.WriteByte('\n')
+	}
+	return strings.TrimSpace(sb.String())
+}
+
 // mdBlockEl renders one block.
 func mdBlockEl(c *ui.Context, b *md.Block, k tokensT) {
 	switch b.Kind {
 	case md.KindHeading:
 		size := []float32{17, 15.5, 14}[min(b.Level, 3)-1]
-		ui.Text(c, b.Text).FontSize(size).Bold().Selectable()
+		ui.Text(c, b.Text).FontSize(size).Bold()
 	case md.KindPara:
 		mdProse(c, strings.Split(b.Text, "\n"), k, nil)
 	case md.KindList:
@@ -125,14 +171,14 @@ func mdTableEl(c *ui.Context, b *md.Block, k tokensT) {
 	})
 }
 
-// mdProse renders one prose run (lines joined by newlines) as selectable
-// text: constructor spans when the run carries no link (the form whose
-// selectable editor receives presses), the element form when it does —
-// a link is a clickable element and cannot be a span. style tweaks the
-// element in either form.
+// mdProse renders one prose run (lines joined by newlines) as text inside
+// the reply's container selection: constructor spans when the run carries
+// no link (the form whose editor receives the presses), the element form
+// when it does — a link is a clickable element and cannot be a span.
+// style tweaks the element in either form.
 func mdProse(c *ui.Context, lines []string, k tokensT, style func(ui.Element)) {
 	if mdHasLink(lines) {
-		e := ui.RichText(c).Selectable().Children(func() {
+		e := ui.RichText(c).Children(func() {
 			for i, l := range lines {
 				if i > 0 {
 					ui.Text(c, "\n")
@@ -152,7 +198,7 @@ func mdProse(c *ui.Context, lines []string, k tokensT, style func(ui.Element)) {
 		}
 		spans = append(spans, mdSpans(l, k)...)
 	}
-	e := ui.RichText(c, spans...).FontSize(14).LineHeight(1.6).Selectable()
+	e := ui.RichText(c, spans...).FontSize(14).LineHeight(1.6)
 	if style != nil {
 		style(e)
 	}

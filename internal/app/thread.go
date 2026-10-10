@@ -34,7 +34,7 @@ func (a *app) threadView(c *ui.Context) {
 			List: chat.MessageListOptions{
 				ID:    func(i int) string { return a.thread.rows[i].id },
 				Date:  func(i int) time.Time { return a.thread.rows[i].at },
-				Label: func(i int) string { return a.thread.rows[i].text },
+				Label: func(i int) string { return mdPlain(a.thread.rows[i].text) },
 			},
 			Input: func() { a.composer(c) },
 		}, func(i int) { a.renderRow(c, &a.thread.rows[i]) })
@@ -93,7 +93,9 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 			}
 			switch {
 			case r.streaming:
-				chat.StreamingText(c, r.text, chat.StreamingTextOptions{Streaming: r.text != ""})
+				// Streaming markdown: the same selectable renderer as the
+				// finished reply; the parse re-runs as the text grows.
+				mdView(c, r.text)
 			case r.text != "":
 				mdView(c, r.text) // selectable markdown once the reply is done
 			}
