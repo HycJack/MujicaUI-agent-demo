@@ -324,7 +324,8 @@ func (a *app) toolStepRow(c *ui.Context, r *row, i int) {
 
 // toolCard renders one invocation's specialized card: bash as a terminal
 // card (its stop button aborts the loop), write_file as a before/after
-// review card, everything else as a tool-call card.
+// review card, a TaskOutput poll's output flat (reading it is the point
+// of the call), everything else as a tool-call card.
 func (a *app) toolCard(c *ui.Context, t *toolRun) {
 	switch t.name {
 	case "bash":
@@ -335,6 +336,15 @@ func (a *app) toolCard(c *ui.Context, t *toolRun) {
 	case "write_file":
 		// The write already happened; the card is the review record.
 		agent.FileChangeCard(c, &t.decision, t.change, agent.FileChangeCardOptions{Preview: 4})
+	case "TaskOutput":
+		if strings.TrimSpace(t.result) != "" || t.errMsg != "" {
+			ui.Text(c, firstNonEmpty(t.result, t.errMsg)).FontSize(12).TextColor(tokens(c).Text).MaxLines(12)
+		} else {
+			agent.ToolCallCard(c, agent.ToolCall{
+				ID: t.callID, Name: t.name, Args: t.args, Result: t.result,
+				Error: t.errMsg, State: t.state, Duration: t.dur,
+			}, agent.ToolCallCardOptions{})
+		}
 	default:
 		agent.ToolCallCard(c, agent.ToolCall{
 			ID: t.callID, Name: t.name, Args: t.args, Result: t.result,
@@ -344,7 +354,7 @@ func (a *app) toolCard(c *ui.Context, t *toolRun) {
 }
 
 // toolIcon maps a tool kind to its timeline mark (DSH's per-tool rows).
-// Names verified against icons/svg: terminal, pencil, file-text, bot.
+// Names verified against icons/svg: terminal, pencil, file-text, bot, eye.
 func toolIcon(name string) string {
 	switch name {
 	case "bash":
@@ -353,6 +363,10 @@ func toolIcon(name string) string {
 		return "pencil"
 	case "read_file":
 		return "file-text"
+	case "Task":
+		return "bot"
+	case "TaskOutput":
+		return "eye"
 	}
 	return "bot"
 }
@@ -366,15 +380,41 @@ func toolTitle(name string) string {
 		return "Wrote file"
 	case "read_file":
 		return "Read file"
+	case "Task":
+		return "Sub-agent"
+	case "TaskOutput":
+		return "Sub-agent output"
 	}
 	return name
 }
 
 // toolSummary derives the collapsed row's one-line summary: the command for
-// bash, the path argument for file tools, the raw args otherwise.
+// bash, the path argument for file tools, the dispatched mission for a
+// sub-agent, the polled agent id for a TaskOutput pull, the raw args
+// otherwise.
 func toolSummary(t *toolRun) string {
 	if t.name == "bash" && t.run.Command != "" {
 		return firstLine(t.run.Command)
+	}
+	if t.name == "Task" {
+		var p struct {
+			Description string `json:"description"`
+			Prompt      string `json:"prompt"`
+		}
+		if json.Unmarshal([]byte(t.args), &p) == nil {
+			if s := firstLine(p.Prompt); s != "" {
+				return engine.Trunc(s, 80)
+			}
+			return engine.Trunc(firstLine(p.Description), 80)
+		}
+	}
+	if t.name == "TaskOutput" {
+		var p struct {
+			AgentID string `json:"agent_id"`
+		}
+		if json.Unmarshal([]byte(t.args), &p) == nil && p.AgentID != "" {
+			return "agent " + p.AgentID
+		}
 	}
 	var p struct {
 		Path string `json:"path"`

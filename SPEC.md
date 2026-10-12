@@ -753,7 +753,12 @@ CLI 的桌面壳：选 "Claude Code CLI" 后表单换成 CLI 探测行
   （后缀去重防 partial/complete 重复）；tool_use→`OnToolStart`
   （**Bash/Edit/Write/Read 工具名映射**到 bash/write_file/read_file
   卡片体系；Edit/Write 的 FileChange 数据从 args 取
-  old_string/new_string/content）；tool_result→`OnToolEnd`；
+  old_string/new_string/content）；**Task/TaskOutput 是一等公民卡**——
+  `Task`（子 agent）标题 "Sub-agent"、bot 图标、摘要 = `input.prompt`
+  首行（截 80 字），运行中转 spinner，结果携带的 `agentId` 随
+  tool_result 展示；`TaskOutput`（父 agent 中途轮询子 agent 输出）标题
+  "Sub-agent output"、eye 图标、摘要 = `agent <id>`，其输出**平铺直读**
+  （监控的目的就是读它，不再折叠进 JSON 卡）；tool_result→`OnToolEnd`；
   result→`OnNote`（耗时 · 费用 · token · 会话号一行，挂在回复行尾，
   不持久化）；compact 边界→`OnNote`（压缩通知）。
 - **终止语义**：ctx 取消且已见过事件 = 正常结束；取消且一个事件都没见
