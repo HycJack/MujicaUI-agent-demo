@@ -55,6 +55,31 @@ func TestClaudeSessionAndText(t *testing.T) {
 	}
 }
 
+// A run that never saw its init frame still reports the session id on
+// the result line — and it must reach OnSession, not just the note:
+// the id is what rides --resume next turn, and losing it silently
+// forks the thread into a fresh session. Report once, even if both
+// frames name it.
+func TestClaudeSessionFromResultFallback(t *testing.T) {
+	cc, r := newCollected(nil)
+	r.handle(`{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"total_cost_usd":0.0,"result":"done","session_id":"sess-fallback"}`)
+	if len(cc.sess) != 1 || cc.sess[0] != "sess-fallback" {
+		t.Fatalf("session from result fallback: %v", cc.sess)
+	}
+	// A late init after the result fallback does not double-report.
+	r.handle(`{"type":"system","subtype":"init","session_id":"sess-fallback"}`)
+	if len(cc.sess) != 1 {
+		t.Fatalf("session double-reported: %v", cc.sess)
+	}
+	// An init-first run reports exactly once too.
+	cc2, r2 := newCollected(nil)
+	r2.handle(`{"type":"system","subtype":"init","session_id":"sess-init"}`)
+	r2.handle(`{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"total_cost_usd":0.0,"result":"done","session_id":"sess-init"}`)
+	if len(cc2.sess) != 1 || cc2.sess[0] != "sess-init" {
+		t.Fatalf("init-first session reporting: %v", cc2.sess)
+	}
+}
+
 // Partial deltas then the complete assistant message: only the
 // un-streamed suffix may go out (the CLI warns partials may duplicate
 // the message). Crux's OnText carries the segment's accumulated buffer,

@@ -51,9 +51,12 @@ type claudeRun struct {
 	cb    Callbacks
 	// session is the CLI's session id for this run: cfg.SessionID until
 	// an init event names this run's own.
-	session   string
-	sawEvent  bool
-	sawResult bool
+	session string
+	// sessionReported says OnSession already fired (init, or the
+	// result-event fallback) — once is enough.
+	sessionReported bool
+	sawEvent        bool
+	sawResult       bool
 	// streamed is the text the partial deltas already emitted, so the
 	// complete assistant message that follows them only contributes its
 	// un-streamed suffix.
@@ -115,7 +118,8 @@ func (r *claudeRun) handle(line string) {
 	case "system":
 		if ev.Subtype == "init" && ev.SessionID != "" {
 			r.session = ev.SessionID
-			if r.cb.OnSession != nil {
+			if !r.sessionReported && r.cb.OnSession != nil {
+				r.sessionReported = true
 				r.cb.OnSession(ev.SessionID)
 			}
 		}
@@ -214,9 +218,16 @@ func (r *claudeRun) handle(line string) {
 
 	case "result":
 		// A run that somehow skipped its init frame still gets its
-		// session named: the result event carries session_id too.
+		// session named: the result event carries session_id too. It
+		// must reach OnSession as well — the id is what rides --resume
+		// next turn; losing it here would silently fork the thread's
+		// conversation into a fresh session.
 		if ev.SessionID != "" && r.session == "" {
 			r.session = ev.SessionID
+			if !r.sessionReported && r.cb.OnSession != nil {
+				r.sessionReported = true
+				r.cb.OnSession(ev.SessionID)
+			}
 		}
 		verb := "Done"
 		if ev.IsError || ev.Subtype != "success" {

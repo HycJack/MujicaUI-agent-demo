@@ -58,3 +58,51 @@ func TestLiveClaudeSmoke(t *testing.T) {
 	}
 	t.Logf("text=%q note=%q session=%q", text, note, session)
 }
+
+// TestLiveClaudeResume pins the two-turn contract: the first turn's
+// session id rides --resume on the second, and the CLI actually
+// continues that conversation — the fact planted in turn one is still
+// known in turn two. One session per THREAD, not one per message.
+func TestLiveClaudeResume(t *testing.T) {
+	if os.Getenv("CRUX_LIVE_CLAUDE") != "1" {
+		t.Skip("set CRUX_LIVE_CLAUDE=1 to run the live claude probe")
+	}
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	bin, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("no claude CLI on PATH")
+	}
+	dir := t.TempDir()
+
+	var first, second string
+	var session1, session2 string
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	err = RunClaude(ctx, ClaudeConfig{Bin: bin, Mode: ModeFull, Workdir: dir},
+		"My favorite fruit is durian. Reply with exactly: OK", Callbacks{
+			OnText:    func(s string) { first = s },
+			OnSession: func(id string) { session1 = id },
+		})
+	if err != nil {
+		t.Fatalf("turn 1: %v", err)
+	}
+	if session1 == "" {
+		t.Fatal("turn 1 reported no session id")
+	}
+	err = RunClaude(ctx, ClaudeConfig{Bin: bin, Mode: ModeFull, Workdir: dir, SessionID: session1},
+		"What is my favorite fruit? Answer with only the fruit name.", Callbacks{
+			OnText:    func(s string) { second = s },
+			OnSession: func(id string) { session2 = id },
+		})
+	if err != nil {
+		t.Fatalf("turn 2 (resume %s): %v", session1, err)
+	}
+	if !strings.Contains(strings.ToLower(second), "durian") {
+		t.Fatalf("the resumed session forgot turn 1: turn1=%q turn2=%q session1=%s session2=%s",
+			first, second, session1, session2)
+	}
+	t.Logf("turn1=%q turn2=%q session1=%s session2=%s (same=%v)",
+		first, second, session1, session2, session1 == session2)
+}
