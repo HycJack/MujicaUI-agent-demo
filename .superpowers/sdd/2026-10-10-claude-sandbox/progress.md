@@ -95,5 +95,9 @@ claude.go termination order, approval.go threading — all a.pending accesses on
 thread; streamRowID set before goroutine start, cleared after Run returns, no overlap);
 largest file claude_events.go 397 lines (<500); .gitignore gained /.gocache/ and /.gopath/
 (repo-local toolchain caches, untracked otherwise).
+FINAL VERIFICATION: the user started the magpie gateway and the live smoke PASSED end to end
+against the real CLI: text="pong", note "Done in 32.6s · $0.0682 · 22726 tokens · session
+e3cdd376", session id parsed. The CRLF stdin ruling is confirmed against the real CLI. All
+12 plan tasks green; nothing outstanding.
 
 
