@@ -27,6 +27,10 @@ type LLMConfig struct {
 	// Mode is the three-level approval selector ("read-only" / "agent" /
 	// "full"); "" loads as the agent default.
 	Mode string `json:"mode,omitempty"`
+	// Sandbox wraps agent-mode bash commands in the workspace-scoped
+	// execution boundary. A nil pointer means the default (on), so
+	// settings written before the field existed keep the sandbox active.
+	Sandbox *bool `json:"sandbox,omitempty"`
 }
 
 // LoadSettings reads the settings file; a missing file returns the zero

@@ -15,11 +15,14 @@ import (
 
 	"crux-agent/internal/engine"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/agent"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/core"
-	"github.com/ZacharyZhang-NY/MujicaUI/data"
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/agent"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/core"
+	"github.com/HycJack/MujicaUI/data"
+	"github.com/HycJack/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/input"
+	"github.com/HycJack/MujicaUI/overlay"
+	"github.com/HycJack/MujicaUI/theme"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -35,7 +38,7 @@ func (a *app) threadView(c *ui.Context) {
 			List: chat.MessageListOptions{
 				ID:    func(i int) string { return a.thread.rows[i].id },
 				Date:  func(i int) time.Time { return a.thread.rows[i].at },
-				Label: func(i int) string { return a.thread.rows[i].text },
+				Label: func(i int) string { return mdPlain(a.thread.rows[i].text) },
 			},
 			Input: func() { a.composer(c) },
 		}, func(i int) { a.renderRow(c, &a.thread.rows[i]) })
@@ -94,7 +97,9 @@ func (a *app) renderRow(c *ui.Context, r *row) {
 			ans, _ := r.answerText()
 			switch {
 			case r.streaming:
-				chat.StreamingText(c, ans, chat.StreamingTextOptions{Streaming: ans != ""})
+				// Streaming markdown: the same selectable renderer as the
+				// finished reply; the parse re-runs as the text grows.
+				mdView(c, ans)
 			case ans != "":
 				mdView(c, ans) // selectable markdown once the reply is done
 			}
@@ -449,37 +454,138 @@ func (a *app) regenerate(r *row) string {
 	return ""
 }
 
-// composer is the thread's input area: context chips, the prompt editor
-// with a send button, then the model and a context meter. The chat/agent
-// mode picker is gone — Crux is an agent console, the mode stays Agent.
+// composer is the thread's input area: one card holds the frameless editor,
+// the permission row and, inside it along the bottom edge, the toolbar —
+// attach, model and thinking pickers on the left, the token counter and
+// the send button on the right. Enter sends; the chat/agent mode picker
+// is gone — Crux is an agent console, the mode stays Agent.
 func (a *app) composer(c *ui.Context) {
+	k := tokens(c)
 	ui.Column(c).Gap(8).Children(func() {
 		if id, ok := chat.ContextChips(c, a.thread.ctx, chat.ContextChipsOptions{Max: 2}).Removed(); ok {
 			a.thread.ctx = slices.DeleteFunc(a.thread.ctx, func(it chat.ContextItem) bool { return it.ID == id })
 		}
-		p := chat.PromptComposer(c, &a.thread.draft, chat.PromptComposerOptions{
-			Placeholder: "Direct Crux — it can read files, run commands and edit.",
-			Actions: func() {
+		ui.Column(c).MinWidth(0).Background(k.Background).Border(1, k.ControlBorder).
+			Radius(theme.CardRadius).Padding(6).Gap(2).Children(func() {
+			ta := input.TextArea(c, &a.thread.draft, input.TextAreaOptions{
+				Placeholder: "Direct Crux — it can read files, run commands and edit.",
+				Label:       "Message", MinHeight: 44, MaxHeight: 180,
+				SubmitKey: ui.KeyEnter, Frameless: true,
+			})
+			if ta.Submitted() {
+				a.send()
+			}
+			a.composerMode(c, k)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				a.composerAttach(c, k)
+				a.composerModel(c, k)
+				a.composerThinking(c, k)
+				ui.Spacer(c)
+				chat.TokenCounter(c, 6400, 8000)
 				if chat.SendButton(c, chat.SendButtonOptions{
 					Shortcut: "Enter", Disabled: strings.TrimSpace(a.thread.draft) == "",
 				}).Sent() {
 					a.send()
 				}
-			},
-		})
-		if p.Submitted() {
-			a.send()
-		}
-		ui.Row(c).Gap(14).AlignItems(ui.Center).Wrap().Children(func() {
-			// The permission switch: three modes, the composer owns the
-			// choice (spec §2). Frozen while a reply streams.
-			modeIdx := int(engine.ParseMode(a.llm.Mode))
-			if seg := ui.Segmented(c, &modeIdx, "Read-only", "Agent", "Full access").Label("Permissions"); seg.Changed() && !a.llm.Busy {
-				a.llm.Mode = engine.Mode(modeIdx).String()
-			}
-			// The active backend, set on the Agent settings page (⌘K → Agent).
-			ui.Text(c, a.backendLabel()).FontSize(12).TextColor(tokens(c).TextMuted).SingleLine()
-			chat.TokenCounter(c, 6400, 8000)
+			})
 		})
 	})
+}
+
+// composerMode is the permission row inside the composer card: the
+// three-mode selector IS the approval switch (spec §2), with the active
+// backend named beside it. Frozen while a reply streams.
+func (a *app) composerMode(c *ui.Context, k tokensT) {
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+		modeIdx := int(engine.ParseMode(a.llm.Mode))
+		if seg := ui.Segmented(c, &modeIdx, "Read-only", "Agent", "Full access").Label("Permissions"); seg.Changed() && !a.llm.Busy {
+			a.llm.Mode = engine.Mode(modeIdx).String()
+		}
+		ui.Text(c, a.backendLabel()).FontSize(11).TextColor(k.TextMuted).SingleLine()
+	})
+}
+
+// composerAttach is the toolbar's paperclip: it opens the attach-file
+// dialog over the workspace.
+func (a *app) composerAttach(c *ui.Context, k tokensT) {
+	b := ui.ButtonBase(c).Label("Attach files").Tooltip("Attach files").Size(28, 28).Radius(theme.ControlRadius).Center().Cursor(ui.CursorPointer)
+	if b.Hovered() {
+		b.Background(k.SurfaceHover)
+	}
+	if b.Clicked() {
+		a.openAttachDialog()
+	}
+	b.Children(func() {
+		ui.Icon(c, icons.Must("paperclip")).FontSize(15).TextColor(k.TextMuted)
+	})
+}
+
+// composerModel is the toolbar's model picker: the active model's short
+// name opens a menu of the provider's models. No model is chosen yet —
+// the trigger says so and the menu is still there to pick from.
+func (a *app) composerModel(c *ui.Context, k tokensT) {
+	label := a.llm.Model
+	if m, err := engine.ModelInfoOf(a.llm.Provider, a.llm.Model); err == nil && m.Name != "" {
+		label = m.Name
+	}
+	if strings.TrimSpace(label) == "" {
+		label = "Select a model"
+	}
+	opts := a.modelOptions()
+	overlay.DropdownMenu(c, label, overlay.DropdownMenuOptions{Icon: icons.Must("bot"), Label: "Model"}, func(m *overlay.PopupMenu) {
+		for _, o := range opts {
+			on := o.Value == a.llm.Model
+			if m.Check(o.Label, &on, overlay.PopupMenuItemOptions{}) && on {
+				a.setModel(o.Value)
+			}
+		}
+	})
+}
+
+// setModel switches the backend's model and re-applies its defaults:
+// a model that cannot reason drops the tier, one that can lifts a
+// switched-off tier back to the model's default. Also the test surface
+// for the picker.
+func (a *app) setModel(id string) {
+	a.llm.Model = id
+	m, err := engine.ModelInfoOf(a.llm.Provider, id)
+	if err != nil {
+		return
+	}
+	if !m.Reasoning {
+		a.llm.Thinking = "none"
+		return
+	}
+	if a.llm.Thinking == "none" || a.llm.Thinking == "" {
+		a.llm.Thinking = engine.ThinkDefault(a.llm.Provider, id)
+	}
+}
+
+// composerThinking is the toolbar's reasoning picker, shown only for
+// models that reason.
+func (a *app) composerThinking(c *ui.Context, k tokensT) {
+	if m, err := engine.ModelInfoOf(a.llm.Provider, a.llm.Model); err != nil || !m.Reasoning {
+		return
+	}
+	overlay.DropdownMenu(c, thinkingLabel(a.llm.Thinking), overlay.DropdownMenuOptions{Icon: icons.Must("brain"), Label: "Thinking"}, func(m *overlay.PopupMenu) {
+		for _, t := range reasoningTiers {
+			on := t.Value == a.llm.Thinking
+			if m.Check(t.Label, &on, overlay.PopupMenuItemOptions{}) && on {
+				a.setThinking(t.Value)
+			}
+		}
+	})
+}
+
+// setThinking sets the reasoning tier. Also the test surface for the picker.
+func (a *app) setThinking(v string) { a.llm.Thinking = v }
+
+// thinkingLabel names a thinking tier for the picker.
+func thinkingLabel(v string) string {
+	for _, t := range reasoningTiers {
+		if t.Value == v {
+			return t.Label
+		}
+	}
+	return v
 }

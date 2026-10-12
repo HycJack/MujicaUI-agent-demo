@@ -13,11 +13,11 @@ import (
 	"crux-agent/internal/engine"
 	"crux-agent/internal/fsutil"
 	"crux-agent/internal/store"
-	"github.com/ZacharyZhang-NY/MujicaUI/agent"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/code"
-	"github.com/ZacharyZhang-NY/MujicaUI/data"
-	"github.com/ZacharyZhang-NY/MujicaUI/git"
+	"github.com/HycJack/MujicaUI/agent"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/code"
+	"github.com/HycJack/MujicaUI/data"
+	"github.com/HycJack/MujicaUI/git"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -259,7 +259,6 @@ type fileDrawer struct {
 	ddiff    git.DiffViewerState
 }
 
-// LLMSettings carries the pi-ai-go backend configuration the provider and
 // LLMSettings is what the settings dialogs edit: the persisted fields come
 // from the store's LLMConfig (data layer); the transient call-state fields
 // live only in the UI layer and never reach the file.
@@ -289,16 +288,21 @@ Prefer showing the primary results within your final response alongside a brief 
 // copy of it to defaultSystemPrompt; a customized prompt passes through.
 const legacySystemPrompt = "You are Crux, a Codex-style coding agent built into a native desktop app. Answer in the user's language, prefer concise and concrete replies, and refer to the repo when relevant."
 
+// SandboxOn reports whether bash runs inside the sandbox boundary;
+// the unset pointer means the default, on.
+func (s *LLMSettings) SandboxOn() bool { return s.Sandbox == nil || *s.Sandbox }
+
 // settingsPaneOpen toggles the right-hand config inspector.
 func (a *app) defaultSettings() LLMSettings {
 	s := LLMSettings{
 		LLMConfig: store.LLMConfig{
 			Provider:     "openai",
-			Model:        "gpt-4o",
 			SystemPrompt: defaultSystemPrompt,
 			Thinking:     "none",
 		},
 	}
+	// No model ships by default: the user picks one in settings, and the
+	// composer's picker keeps offering the provider's list.
 	s.Thinking = engine.ThinkDefault(s.Provider, s.Model)
 	return s
 }
@@ -338,6 +342,9 @@ type app struct {
 	wsDialogOpen bool     // the Open-workspace dialog
 	wsPathField  string   // the dialog's directory input
 	wsCursor     int      // the file tree's selected row (-1 = none)
+	attachOpen   bool     // the attach-file dialog
+	attachQuery  string   // the dialog's filter field
+	attachFiles  []string // the workspace's files, collected when it opens
 
 	// shell
 	navOpen     bool
@@ -376,8 +383,10 @@ func newApp() *app {
 	return a
 }
 
-// closeModals closes the Settings and workspace dialogs.
-func (a *app) closeModals() { a.settingsOpen, a.wsDialogOpen = false, false }
+// closeModals closes the Settings, workspace and attach dialogs.
+func (a *app) closeModals() {
+	a.settingsOpen, a.wsDialogOpen, a.attachOpen = false, false, false
+}
 
 // openProviders opens the Settings dialog on the Providers pane.
 func (a *app) openProviders() { a.settingsTab, a.settingsOpen = "providers", true }

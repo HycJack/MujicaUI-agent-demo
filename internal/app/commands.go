@@ -5,8 +5,8 @@ package app
 // the file source, export the thread — reachable without the mouse.
 
 import (
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
-	"github.com/ZacharyZhang-NY/MujicaUI/navigation"
+	"github.com/HycJack/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/navigation"
 	"github.com/egoist/mygo/ui"
 )
 

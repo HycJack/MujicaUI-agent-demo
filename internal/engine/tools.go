@@ -11,26 +11,32 @@ package engine
 // a platform without an OS sandbox backend lands on an approval card.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/HycJack/pi-ai-go/core"
+
+	"crux-agent/internal/sandbox"
 )
 
 // Gate carries the permission context into the toolset (spec §2.2). The
 // zero value fails closed to read-only: a caller that builds tools
-// without thinking about the gate gets the safest mode.
+// without thinking about the gate gets the safest mode. A nil Sandbox
+// means the boundary is off (agent-mode bash runs plainly, full access
+// runs ungated either way).
 type Gate struct {
 	Mode            Mode
-	Sandbox         Sandbox      // nil → treated as unavailable
-	OnApproval      ApprovalFunc // nil → an ask settles as a denial
+	Sandbox         sandbox.Sandbox // nil → the boundary is off
+	OnApproval      ApprovalFunc    // nil → an ask settles as a denial
 	ApprovalTimeout time.Duration
 }
 
@@ -39,8 +45,21 @@ const (
 	toolFileCap = 64 * 1024 // read_file content cap
 )
 
-// ungatedTools is the original toolset: every call runs, nothing asks.
-func ungatedTools(workdir string) []core.AgentTool {
+// SandboxProvider returns the platform sandbox when enabled. The
+// honesty rule lives in the provider: a platform without a backend
+// reports an error as the tool's result — it never runs unsandboxed
+// while the switch is on.
+func SandboxProvider(enabled bool) sandbox.Sandbox {
+	if !enabled {
+		return nil
+	}
+	return sandbox.New()
+}
+
+// ungatedTools is the full-access toolset: every call runs, nothing
+// asks. A non-nil sb still confines bash — full access is about the
+// permission gate, not the OS boundary.
+func ungatedTools(workdir string, sb sandbox.Sandbox) []core.AgentTool {
 	return []core.AgentTool{
 		{
 			Name:  "bash",
@@ -53,7 +72,7 @@ func ungatedTools(workdir string) []core.AgentTool {
   "required": ["command"]
 }`),
 			Execute: func(ctx context.Context, _ string, params json.RawMessage, _ func(json.RawMessage)) (core.AgentToolResult, error) {
-				return toolBash(ctx, workdir, params)
+				return toolBash(ctx, workdir, sb, params)
 			},
 		},
 		{
@@ -91,13 +110,16 @@ func ungatedTools(workdir string) []core.AgentTool {
 }
 
 // Tools builds the toolset the agent loop runs with, rooted at workdir
-// and gated by g. ModeFull is the original ungated behavior.
+// and gated by g. ModeFull runs the ungated set (full access drops the
+// OS boundary too: "full" is the honest word for it); read-only and
+// agent modes deny or confine per the table (spec §2.1), and
+// agent-mode bash on a platform without a sandbox backend lands on an
+// approval card.
 func Tools(workdir string, g Gate) []core.AgentTool {
 	if g.Mode == ModeFull {
-		return ungatedTools(workdir)
+		return ungatedTools(workdir, nil)
 	}
 	sb := g.Sandbox
-	sandboxOK := sb != nil && sb.Available()
 	return []core.AgentTool{
 		{
 			Name:  "bash",
@@ -110,7 +132,7 @@ func Tools(workdir string, g Gate) []core.AgentTool {
   "required": ["command"]
 }`),
 			Execute: func(ctx context.Context, _ string, params json.RawMessage, _ func(json.RawMessage)) (core.AgentToolResult, error) {
-				return gatedBash(ctx, workdir, params, g, sb, sandboxOK)
+				return gatedBash(ctx, workdir, params, g, sb)
 			},
 		},
 		{
@@ -164,10 +186,13 @@ func ask(ctx context.Context, g Gate, req ApprovalRequest) ApprovalDecision {
 }
 
 // gatedBash runs the bash tool through the gate: denied in read-only;
-// asked in agent mode on platforms without an OS sandbox backend (the
-// approval card IS the boundary there); sandboxed in agent mode where a
-// backend exists; plain in full access.
-func gatedBash(ctx context.Context, workdir string, params json.RawMessage, g Gate, sb Sandbox, sandboxOK bool) (core.AgentToolResult, error) {
+// plain in full access; agent mode confines to the OS sandbox when one
+// is on. A platform whose provider cannot build the boundary (the
+// honesty error — no backend on Windows) falls back to an approval
+// card: the card IS the boundary there, and an approval runs the
+// command unsandboxed once. A nil provider means the user turned the
+// sandbox off in settings — agent mode then runs the command plainly.
+func gatedBash(ctx context.Context, workdir string, params json.RawMessage, g Gate, sb sandbox.Sandbox) (core.AgentToolResult, error) {
 	p, err := decodeParams(params)
 	if err != nil {
 		return textResult(err.Error(), true), nil
@@ -175,54 +200,36 @@ func gatedBash(ctx context.Context, workdir string, params json.RawMessage, g Ga
 	if strings.TrimSpace(p.Command) == "" {
 		return textResult("a command is required", true), nil
 	}
-	switch gateResolve("bash", g.Mode, sandboxOK) {
-	case PermDeny:
+	if g.Mode == ModeReadOnly {
 		return textResult(denialText("bash", g.Mode), true), nil
-	case PermAsk:
+	}
+	if g.Mode == ModeAgent && sb != nil {
+		// Build the boundary first: the build error is the only signal
+		// that the platform has no backend.
+		shell, flag := ShellCommand()
+		cmd, cleanup, err := shellCommand(ctx, sb, workdir, shell, flag, p.Command)
+		if err == nil {
+			defer cleanup()
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			execErr := cmd.Run()
+			text := strings.TrimRight(out.String(), "\n")
+			details, _ := json.Marshal(map[string]any{"command": p.Command, "exit": ExitCode(execErr), "sandboxed": true})
+			res := textResult(text, execErr != nil)
+			res.Details = details
+			return res, nil
+		}
 		d := ask(ctx, g, ApprovalRequest{
 			Tool:    "bash",
 			Summary: "$ " + Trunc(Redact(p.Command), 160),
-			Reason:  "agent mode asks before each command on this platform",
+			Reason:  "no OS sandbox backend on this platform — approve to run unsandboxed once",
 		})
 		if !d.Approved {
 			return textResult("permission denied (bash): "+d.Reason, true), nil
 		}
-		return toolBash(ctx, workdir, params)
-	default:
-		if g.Mode == ModeAgent && sandboxOK {
-			return runSandboxed(ctx, sb, workdir, p.Command)
-		}
-		return toolBash(ctx, workdir, params)
 	}
-}
-
-// runSandboxed executes one command inside the sandbox boundary: the
-// workdir read-write, a fresh scratch as the child's HOME/TMPDIR,
-// network denied. The child inherits the environment minus HOME and
-// TMPDIR, which point into the scratch.
-func runSandboxed(ctx context.Context, sb Sandbox, workdir, command string) (core.AgentToolResult, error) {
-	scratch, err := os.MkdirTemp("", "crux-sbx-")
-	if err != nil {
-		return textResult("sandbox: "+err.Error(), true), nil
-	}
-	defer os.RemoveAll(scratch)
-	_ = os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700)
-	shell, flag := ShellCommand()
-	cmd, _, err := sb.Command(ctx, Boundary{Workdir: workdir, Scratch: scratch, Network: "deny"}, shell, flag, command)
-	if err != nil {
-		return textResult(err.Error(), true), nil
-	}
-	cmd.Dir = workdir
-	cmd.Env = append(os.Environ(), "HOME="+scratch, "TMPDIR="+filepath.Join(scratch, "tmp"))
-	out, execErr := cmd.CombinedOutput()
-	text := TrimOutput(string(out), toolOutCap)
-	if ctx.Err() != nil {
-		text += "\n(the command was stopped — its outcome is unknown)"
-	}
-	details, _ := json.Marshal(map[string]any{"command": command, "exit": ExitCode(execErr), "sandboxed": true})
-	res := textResult(text, execErr != nil)
-	res.Details = details
-	return res, nil
+	return toolBash(ctx, workdir, nil, params)
 }
 
 // gatedRead lets reads through (both gated modes allow read_file), minus
@@ -316,8 +323,11 @@ func textResult(text string, isErr bool) core.AgentToolResult {
 }
 
 // toolBash runs a shell command in the workspace. The command line goes
-// through the platform shell so pipes and redirections work.
-func toolBash(_ context.Context, workdir string, params json.RawMessage) (core.AgentToolResult, error) {
+// through the platform shell so pipes and redirections work. With a
+// sandbox, the command runs inside the workspace-scoped boundary —
+// never silently unsandboxed; a missing backend surfaces as the tool's
+// error.
+func toolBash(ctx context.Context, workdir string, sb sandbox.Sandbox, params json.RawMessage) (core.AgentToolResult, error) {
 	p, err := decodeParams(params)
 	if err != nil {
 		return textResult(err.Error(), true), nil
@@ -325,20 +335,69 @@ func toolBash(_ context.Context, workdir string, params json.RawMessage) (core.A
 	if strings.TrimSpace(p.Command) == "" {
 		return textResult("a command is required", true), nil
 	}
-	env := core.NewDefaultExecutionEnvWithDir(workdir)
 	shell, flag := ShellCommand()
-	stdout, stderr, execErr := env.Exec(shell, []string{flag, p.Command}, workdir)
-	out := strings.TrimRight(stdout, "\n")
-	if strings.TrimSpace(stderr) != "" {
-		if out != "" {
-			out += "\n"
-		}
-		out += strings.TrimRight(stderr, "\n")
+	cmd, cleanup, err := shellCommand(ctx, sb, workdir, shell, flag, p.Command)
+	if err != nil {
+		return textResult(err.Error(), true), nil
 	}
+	defer cleanup()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	execErr := cmd.Run()
+	text := strings.TrimRight(out.String(), "\n")
 	details, _ := json.Marshal(map[string]any{"command": p.Command, "exit": ExitCode(execErr)})
-	res := textResult(out, execErr != nil)
+	res := textResult(text, execErr != nil)
 	res.Details = details
 	return res, nil
+}
+
+// shellCommand builds the command for one bash invocation. Without a
+// sandbox it is a plain child process; with one, the scratch directory
+// is created here — the provider owns the boundary, the engine owns
+// the child's environment and the cleanup order. Either way the child
+// leads its own process group: a stop kills the whole tree, and
+// WaitDelay bounds the output pipes a surviving grandchild would
+// otherwise hold open forever.
+func shellCommand(ctx context.Context, sb sandbox.Sandbox, workdir, name, arg string, commandLine string) (*exec.Cmd, func(), error) {
+	if sb == nil {
+		cmd := exec.CommandContext(ctx, name, arg, commandLine)
+		cmd.Dir = workdir
+		procGroupAttr(cmd)
+		return cmd, func() {}, nil
+	}
+	scratch, err := os.MkdirTemp("", "crux-sandbox-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { os.RemoveAll(scratch) }
+	if err := os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	cmd, wrapCleanup, err := sb.Command(ctx, sandbox.Boundary{
+		Workdir: sandbox.Canonical(workdir),
+		Scratch: scratch,
+		Network: "deny",
+	}, name, arg, commandLine)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	if wrapCleanup != nil {
+		inner := cleanup
+		cleanup = func() { wrapCleanup(); inner() }
+	}
+	cmd.Dir = workdir
+	procGroupAttr(cmd)
+	// The child sees a minimal environment pointing at the boundary's
+	// writable places, so caches and temp files land inside the grants.
+	cmd.Env = []string{
+		"HOME=" + scratch,
+		"TMPDIR=" + filepath.Join(scratch, "tmp"),
+		"PATH=" + os.Getenv("PATH"),
+	}
+	return cmd, cleanup, nil
 }
 
 // ShellCommand picks the platform shell wrapper for the bash tool.

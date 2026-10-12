@@ -4,8 +4,11 @@
 MujicaUI-agent-demo / Atlas）
 建立在两个库之上：
 
-- **MyGo** `github.com/egoist/mygo` —— 原生 GPU 自绘 UI 与窗口运行时（无 WebView / HTML / JS）。
-- **MujicaUI** `github.com/ZacharyZhang-NY/MujicaUI` —— 组件库，一个组件类别一个包。
+- **MyGo** `github.com/egoist/mygo`（**v0.3.4**）—— 原生 GPU 自绘 UI 与窗口运行时（无 WebView / HTML / JS）。
+- **MujicaUI** `github.com/HycJack/MujicaUI` —— 组件库，一个组件类别一个包。
+  这是上游 `github.com/ZacharyZhang-NY/MujicaUI` 的 fork（分支 `mygo-v0.3`）：
+  上游还停在 mygo v0.2.x，fork 完成了 v0.3 值类型 `Element` API 的全库迁移；
+  本仓库直接 import fork 路径。
 
 这份文件是给改动这些代码的人 / Agent 的。核心一句：**先查文档再写，别猜；改完必须用渲染测试兜底。**
 
@@ -16,13 +19,13 @@ MujicaUI-agent-demo / Atlas）
 **签名永远以 `go doc` 为准**（两参数形式，别用空格拼包路径）：
 
 ```sh
-go doc github.com/ZacharyZhang-NY/MujicaUI/chat PromptComposer     # 单个符号
-go doc github.com/ZacharyZhang-NY/MujicaUI/chat PromptComposerOptions  # Options 字段
-go doc -all github.com/ZacharyZhang-NY/MujicaUI/git               # 整个包
+go doc github.com/HycJack/MujicaUI/chat PromptComposer     # 单个符号
+go doc github.com/HycJack/MujicaUI/chat PromptComposerOptions  # Options 字段
+go doc -all github.com/HycJack/MujicaUI/git               # 整个包
 go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 包
 ```
 
-**MujicaUI 模块内**（`go list -m -f '{{.Dir}}' github.com/ZacharyZhang-NY/MujicaUI` 拿路径）：
+**MujicaUI 模块内**（`go list -m -f '{{.Dir}}' github.com/HycJack/MujicaUI` 拿路径）：
 
 - `docs/components/NNN-name.md` —— **每个组件一页**：用途、最小示例、参数表（字段/类型/默认值/必填）、
   状态、事件、键盘操作、**限制**。共 500 个，按类别编号（`201-chat-container.md`、`068-command-palette.md`…）。
@@ -48,6 +51,16 @@ go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 
 
 ## 2. MyGo 的注意事项
 
+0. **v0.3 的两个语义变化（从 v0.2 升级时最易踩）：**
+   - `ui.Element` 是 **16 字节值句柄**（`frame.go`），不再是 `*ui.Element`；零值即"缺席"，
+     判空用 `e.Valid()`（属于当前构建帧），构建器方法全部值接收、返回值。
+   - **toggle 类 Base 的输入是延迟应用的**（`CheckboxBase`/`SwitchBase`/`ToggleBase`/
+     `CollapsibleBase`/`RadioBase`/滑条键盘）：v0.2 在构建期当场翻转 `*on`，
+     v0.3 挂 valueInput 回调，等**响应查询**才应用。所以
+     `was := *x; Base(c, x); if *x != was` 这种括号式检测**永远看不到变化**——
+     改为配置完控件后直接问 `el.Changed()`（文档原文："applies pending input …
+     Configure controls before querying their response"）。
+     Popover/菜单的开关（anchor `Clicked()`、backdrop 按压、Escape）仍在构建期，不受影响。
 1. **它是原生窗口，不是网页。** `go run .` 需要图形环境；在 CI / 无显示环境里
    它是"跑不起来"或直接超时的，这**不代表代码有问题**。验证视图用无窗口方式：
    ```sh
@@ -156,6 +169,7 @@ go doc github.com/egoist/mygo/ui                                  # MyGo 的 ui 
 | `README.md` | 项目说明与截图；`MYGO_UI_SHOTS` 截图用法 |
 | `SPEC.md` | Crux 的完整规格文档 |
 | `*.go` | UI 层在 `internal/app/`（数据/逻辑层在 `internal/store`、`internal/engine`），各文件职责见 SPEC §4；`tokens.go` 演示如何只做主题转发 |
+| `internal/sandbox/` | bash 工具的执行边界（Seatbelt / bubblewrap）：workdir 读写 + scratch HOME + 断网 + 凭据目录遮蔽；无后端平台报错不降级。开关在设置 Agent 面板（`LLMConfig.Sandbox`，nil=默认开） |
 | `screenshots/` | 渲染测试产出的界面截图 |
 
 组件级的参考实现（agent / chat / code / git 各组件的直接用法）见

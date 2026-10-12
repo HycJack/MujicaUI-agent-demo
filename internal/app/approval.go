@@ -12,7 +12,7 @@ import (
 
 	"crux-agent/internal/engine"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/icons"
 	"github.com/egoist/mygo/ui"
 )
 

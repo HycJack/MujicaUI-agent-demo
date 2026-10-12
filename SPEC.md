@@ -484,25 +484,30 @@ system-prompt.expected.md`）——身份两行 + 逐条规则，**只保留映�
 
 ### 7.2.1 权限三档门与审批卡（`gate.go` / `tools.go` / `approval.go`）
 
-DSH 风格的三级权限模式是**唯一的审批开关**，由 composer 底部的
-`ui.Segmented`（Read-only / Agent / Full access）选择，存进
-`settings.json` 的 `mode` 字段；`engine.ParseMode` 把落盘字符串解析成
+DSH 风格的三级权限模式是**唯一的审批开关**，由 composer 卡片内的
+`composerMode` 行（`ui.Segmented`：Read-only / Agent / Full access）选择，
+存进 `settings.json` 的 `mode` 字段；`engine.ParseMode` 把落盘字符串解析成
 `Mode`（空 = agent 默认，拼错 = read-only——**拼写错误不是权限**）：
 
 | 模式 | bash | write_file | read_file |
 | --- | --- | --- | --- |
 | **Read-only** | 拒绝 | 拒绝 | 放行 |
-| **Agent** | 沙箱可用→入沙箱；沙箱不可用→出审批卡 | 限定工作区内 | 放行（凭据目录拒绝） |
-| **Full access** | 放行 | 放行 | 放行 |
+| **Agent** | 沙箱开关开→入沙箱（后端缺失→出审批卡，批准即裸跑一次）；开关关→直接运行 | 限定工作区内 | 放行（凭据目录拒绝） |
+| **Full access** | 放行（**不经沙箱**——全权即全裸） | 放行 | 放行 |
 
-- **门表**（`gateResolve`）：未知工具一律拒绝；`gatedBash` 按模式分派，
+- **门表**（`gateResolve`）：未知工具一律拒绝；`gatedBash` 按模式分派
+  （沙箱构建失败 = 平台无后端 → 审批卡，卡就是边界），
   `gatedWrite` 做 `withinWorkdir` 路径收束，`gatedRead` 做凭据目录
   （`.ssh` / `.aws` / `.gnupg` / `.kube` / `.docker` / `.config/gh` /
-  `.netrc`）拒绝。
-- **沙箱层**（`sandbox.go`）：macOS = seatbelt profile、Linux = bubblewrap，
-  均为一次性 `Command(ctx, name, args...)` 包装（边界 = 工作区 + 临时
-  scratch + 断网）；**Windows 无 OS 级沙箱**（`Available()==false`），
-  Agent 模式下的 bash 落到**逐条审批卡**——卡就是边界。
+  `.netrc`）拒绝（`credentials.go`，与沙箱包遮蔽同一张清单）。
+- **沙箱层**（`internal/sandbox` 包，上游钦定）：macOS = seatbelt profile、
+  Linux = bubblewrap，`Command(ctx, boundary, name, args...)` 一次性包装
+  （边界 = 工作区读写 + 临时 scratch 作 HOME/TMPDIR + 断网 + 凭据目录遮蔽，
+  子进程只看到最小环境）；**Windows 等无后端平台**按**诚实规则**在构建时
+  返回报错——绝不静默降级为无沙箱执行，Agent 模式下该错误落成**逐条
+  审批卡**。设置 Agent 面板的**沙箱开关**（`LLMConfig.Sandbox`，`nil` =
+  默认开）控制 Agent 模式是否启用该边界；关掉 = 用户明示要裸跑。
+  `engine.SandboxProvider(on)` 是开关到 provider 的桥。
 - **审批卡**（`approval.go`）：`ApprovalFunc` 桥（`a.awaitApproval`）把
   引擎的 ask 变成挂在当前 streaming 行上的卡片（工具名 + 已脱敏的单行
   摘要 + Allow once / Always allow / Deny）。决策写回引擎的
@@ -709,17 +714,23 @@ token 时 `TypingIndicator`；流式中 = 过程区（组头展开）+ 末段
 ```
 Column(Gap 8)
 ├── chat.ContextChips(&ctx, {Max:2})        可移除上下文芯片
-├── chat.PromptComposer(&draft, {
-│       Placeholder,
-│       Actions:() -> chat.SendButton({Shortcut:"Enter", Disabled: draft 空})
-│   })  → Submitted() 也触发 send
-│       （chat/agent 模式选择器已移除——Crux 固定 Agent 模式）
-└── Row(Wrap)
-    ├── ui.Segmented("Read-only / Agent / Full access")   权限三档（§7.2.1）
-    │       ——忙时（Busy）冻结不改值；选择即落盘 settings.mode
-    ├── 后端标签（Agent 设置页设定；claude 后端 = "claude · 别名"）
-    └── chat.TokenCounter(6400, 8000)
+└── composer 卡片 Column(Background + Border, CardRadius, Padding 6, Gap 2)
+    ├── input.TextArea(draft, Frameless, 44–180 高, Enter 提交) → send()
+    ├── composerMode Row(Gap 10)
+    │   ├── ui.Segmented("Read-only / Agent / Full access")   权限三档（§7.2.1）
+    │   │       ——忙时（Busy）冻结不改值；选择即落盘 settings.mode
+    │   └── 后端标签（Agent 设置页设定；claude 后端 = "claude · 别名"）
+    └── 工具栏 Row(Gap 6, AlignItems Center)
+        ├── composerAttach（回形针 → 附加文件对话框）
+        ├── composerModel（模型菜单，overlay.DropdownMenu）
+        ├── composerThinking（推理档菜单，仅可推理模型）
+        ├── ui.Spacer
+        ├── chat.TokenCounter(6400, 8000)
+        └── chat.SendButton({Shortcut:"Enter", Disabled: draft 空})
 ```
+
+（chat/agent 模式选择器已移除——Crux 固定 Agent 会话形态；权限三档是
+composer 里唯一的模式开关。）
 
 ### 7.6 Claude Code 后端（`internal/engine/claude*.go`）
 
@@ -1120,14 +1131,17 @@ flash toast（成功文案或错误首行）并重新收集；无窗口（测试
    （不覆盖新文件、旧目录保留）；settings / workspace / 会话索引 + 每会话转录的
    落盘往返与损坏回退；旧单文件索引一次性拆分（转录落盘、索引去 rows、原文件留
    `.bak`、二次运行幂等）；转录路径 id 消毒防目录逃逸。
- 18. **权限门 / 沙箱 / Claude 后端**（`internal/engine`）—— `gate_test.go`
-    （模式解析、门表全分支、nil/超时审批失败关闭）；`sandbox_test.go`
-    （边界构造、凭据目录拒绝、平台可用性）；`tools_test.go`（三档分派、
-    工作区收束、fake 沙箱执行 HOME=scratch）；`cliproc_test.go`（Reap 杀
+ 18. **权限门 / 沙箱 / Claude 后端**（`internal/engine` + `internal/sandbox`）—— `gate_test.go`
+    （模式解析、门表全分支、nil/超时审批失败关闭）；`internal/sandbox` 包
+    自身的 `sandbox_test.go` / `sandbox_live_test.go`（边界、凭据目录清单、
+    平台契约，live 按平台跳过）；engine 侧 `tools_test.go`（三档分派、
+    工作区收束、failingSandbox 落审批卡、fakeSandbox HOME=scratch 走线、
+    开关关闭裸跑）；`cliproc_test.go`（Reap 杀
     lingerer、脱敏、截断）；`claude_events_test.go`（15 个行级事件测试）；
     `claude_proc_test.go`（**进程级** fake CLI——Windows .cmd / Unix .sh，
     真实 spawn：标志位、prompt-on-stdin、审批 wire 往返、常驻 CLI 收割、
-    取消终止、stderr 错误尾）；`claude_live_test.go`（**真实 CLI 冒烟**，
+    取消终止、stderr 错误尾、**result 后非零退出码不再顶替回复**）；
+    `claude_live_test.go`（**真实 CLI 冒烟**，
     `CRUX_LIVE_CLAUDE=1` 开启，否则跳过）。
  19. **`TestProvidersPaneAgentTypeSwitch` / `TestClaudePaneContent` /
     `TestBackendLabelClaude` / `TestDetectClaudeHeadless`**

@@ -228,3 +228,32 @@ func TestTranscriptPathSanitize(t *testing.T) {
 		t.Fatal("safe id was changed")
 	}
 }
+
+// Settings round-trip keeps the sandbox switch, and a settings file
+// from before the field existed reads as the default (sandbox on).
+func TestSettingsSandboxRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	off := false
+	if err := SaveSettings(path, LLMConfig{Provider: "openai", Model: "gpt-4o", Sandbox: &off}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok, err := LoadSettings(path)
+	if err != nil || !ok {
+		t.Fatalf("load: ok=%v err=%v", ok, err)
+	}
+	if cfg.Sandbox == nil || *cfg.Sandbox {
+		t.Fatal("explicit off did not survive the round trip")
+	}
+	old := []byte(`{"provider":"openai","model":"gpt-4o"}`)
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = LoadSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox != nil {
+		t.Fatal("a pre-sandbox settings file must read as the default (nil), not off")
+	}
+}

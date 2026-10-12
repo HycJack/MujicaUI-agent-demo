@@ -23,8 +23,8 @@ import (
 
 	"crux-agent/internal/engine"
 	"crux-agent/internal/fsutil"
-	muiagent "github.com/ZacharyZhang-NY/MujicaUI/agent"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
+	muiagent "github.com/HycJack/MujicaUI/agent"
+	"github.com/HycJack/MujicaUI/chat"
 )
 
 // engineConfig projects the app's LLM settings onto the engine's Config,
@@ -42,6 +42,7 @@ func (a *app) engineConfig() engine.Config {
 
 		Backend:         a.llm.Backend,
 		Mode:            engine.ParseMode(a.llm.Mode),
+		Sandbox:         a.llm.SandboxOn(),
 		OnApproval:      a.awaitApproval,
 		ClaudeBin:       a.claudeBin,
 		ClaudeSessionID: a.thread.claudeID,

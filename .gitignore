@@ -5,3 +5,12 @@
 mygo_windows_*.syso
 *.exe
 *.exe~
+
+.DS_Store
+crux-agent
+.v2c/
+.video_agent/
+*.test
+
+# packaged builds
+bin/

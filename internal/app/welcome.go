@@ -4,8 +4,8 @@ package app
 // capability cards and starter chips that feed the composer below.
 
 import (
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/icons"
 	"github.com/egoist/mygo/ui"
 )
 

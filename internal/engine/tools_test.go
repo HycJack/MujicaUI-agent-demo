@@ -2,12 +2,14 @@ package engine
 
 // tools_test.go covers the real agent toolset: bash runs a real shell
 // command in the workspace, read_file/write_file round-trip contents (the
-// write reporting old/new for the review card), and the shell wrapper
-// matches the platform.
+// write reporting old/new for the review card), the shell wrapper matches
+// the platform, and the gate (spec §2.1) denies, confines and asks per
+// the mode table.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +20,8 @@ import (
 	"time"
 
 	"github.com/HycJack/pi-ai-go/core"
+
+	"crux-agent/internal/sandbox"
 )
 
 // toolByName finds one tool's Execute in the full-access toolset rooted
@@ -34,12 +38,14 @@ func toolByName(t *testing.T, workdir, name string) func(ctx context.Context, id
 }
 
 // gateTools builds a gated toolset with a recording approval callback
-// (nil decisions deny and record the ask).
+// (nil decisions deny and record the ask). The provider is the
+// no-backend stand-in, so agent-mode bash lands on the ask path on
+// every platform.
 func gateTools(t *testing.T, workdir string, mode Mode, decide ApprovalFunc) []core.AgentTool {
 	t.Helper()
 	return Tools(workdir, Gate{
 		Mode:            mode,
-		Sandbox:         NewSandbox(),
+		Sandbox:         failingSandbox{},
 		OnApproval:      decide,
 		ApprovalTimeout: 60 * time.Millisecond,
 	})
@@ -189,12 +195,10 @@ func TestGateReadOnlyDeniesWithoutAsking(t *testing.T) {
 	}
 }
 
-// On Windows the agent-mode ask approves a command and it then runs;
-// denying blocks it with the reason fed back to the model.
+// Agent-mode bash with no usable sandbox backend (the honesty error)
+// lands on an approval card: an approval runs the command once; the ask
+// itself is redacted.
 func TestGateAskApprovesAndRuns(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the ask path needs a platform without an OS sandbox backend")
-	}
 	dir := t.TempDir()
 	var asked []ApprovalRequest
 	tools := gateTools(t, dir, ModeAgent, func(ctx context.Context, req ApprovalRequest) ApprovalDecision {
@@ -218,9 +222,6 @@ func TestGateAskApprovesAndRuns(t *testing.T) {
 }
 
 func TestGateAskDeniedBlocks(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the ask path needs a platform without an OS sandbox backend")
-	}
 	dir := t.TempDir()
 	tools := gateTools(t, dir, ModeAgent, func(ctx context.Context, req ApprovalRequest) ApprovalDecision {
 		return ApprovalDecision{Reason: "the user denied this call"}
@@ -232,9 +233,6 @@ func TestGateAskDeniedBlocks(t *testing.T) {
 
 // A nil approval handler denies the ask — headless runs fail closed.
 func TestGateNilApprovalDenies(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the ask path needs a platform without an OS sandbox backend")
-	}
 	tools := gateTools(t, t.TempDir(), ModeAgent, nil)
 	if _, isErr := callTool(t, tools, "bash", `{"command":"echo x"}`); !isErr {
 		t.Fatal("nil OnApproval must deny an ask")
@@ -243,9 +241,6 @@ func TestGateNilApprovalDenies(t *testing.T) {
 
 // A decision that arrives after the deadline is not a decision.
 func TestGateApprovalTimeoutDenies(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the ask path needs a platform without an OS sandbox backend")
-	}
 	tools := gateTools(t, t.TempDir(), ModeAgent, func(ctx context.Context, req ApprovalRequest) ApprovalDecision {
 		<-ctx.Done() // never answers in time
 		return ApprovalDecision{Approved: true}
@@ -272,17 +267,27 @@ func TestGateWriteConfinedToWorkdir(t *testing.T) {
 	}
 }
 
-// fakeSandbox reports available and execs without confinement, so the
-// sandboxed-bash wiring (Dir, HOME/TMPDIR into the scratch, output
-// capture, details) is testable on every platform.
+// --- the sandbox wiring ---
+
+// failingSandbox is the no-backend stand-in: it refuses to build any
+// boundary the way a platform without an OS sandbox does (the honesty
+// error).
+type failingSandbox struct{}
+
+func (failingSandbox) Command(ctx context.Context, b sandbox.Boundary, name string, arg ...string) (*exec.Cmd, func(), error) {
+	return nil, nil, errors.New("sandboxed execution is not implemented on this platform")
+}
+
+// fakeSandbox execs without confinement, so the sandboxed-bash wiring
+// (Dir, HOME/TMPDIR into the scratch, output capture, details) is
+// testable on every platform.
 type fakeSandbox struct{}
 
-func (fakeSandbox) Available() bool { return true }
-func (fakeSandbox) Command(ctx context.Context, b Boundary, name string, arg ...string) (*exec.Cmd, func(), error) {
+func (fakeSandbox) Command(ctx context.Context, b sandbox.Boundary, name string, arg ...string) (*exec.Cmd, func(), error) {
 	return exec.CommandContext(ctx, name, arg...), nil, nil
 }
 
-// Agent-mode bash with an available sandbox backend routes through the
+// Agent-mode bash with a working sandbox backend routes through the
 // sandbox path: the child sees the scratch as HOME and the workdir as
 // its directory, and the result carries sandboxed=true.
 func TestGateSandboxedBashWiring(t *testing.T) {
@@ -296,36 +301,98 @@ func TestGateSandboxedBashWiring(t *testing.T) {
 	if res.isErr {
 		t.Fatalf("sandboxed bash failed: %s", res.text)
 	}
-	if !strings.Contains(res.text, "crux-sbx-") {
+	if !strings.Contains(res.text, "crux-sandbox-") {
 		t.Fatalf("child HOME is not the scratch: %q", res.text)
 	}
-	if !bytesContains(res.details, []byte(`"sandboxed":true`)) {
+	if !strings.Contains(res.details, `"sandboxed":true`) {
 		t.Fatalf("details missing sandboxed flag: %s", res.details)
+	}
+}
+
+// With the sandbox provider off (nil), agent-mode bash runs plainly —
+// the user turned the boundary off in settings.
+func TestGateSandboxOffRunsPlain(t *testing.T) {
+	tools := Tools(t.TempDir(), Gate{Mode: ModeAgent})
+	res := bashResult(t, tools, `{"command":"echo plain"}`)
+	if res.isErr || !strings.Contains(res.text, "plain") {
+		t.Fatalf("plain agent bash failed: err=%v text=%q", res.isErr, res.text)
+	}
+	if strings.Contains(res.details, `"sandboxed":true`) {
+		t.Fatalf("unsandboxed run reported itself sandboxed: %s", res.details)
+	}
+}
+
+// TestToolsBashSandboxed asserts the wiring against the real provider:
+// with the sandbox on, agent-mode bash still runs the command (inside
+// the boundary) and reports exit codes; the platform's grant
+// enforcement itself is covered by the sandbox package's live tests.
+func TestToolsBashSandboxed(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("no sandbox backend on this platform")
+	}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("bwrap"); err != nil {
+			t.Skip("no bwrap on PATH")
+		}
+	}
+	dir := t.TempDir()
+	tools := Tools(dir, Gate{Mode: ModeAgent, Sandbox: sandbox.New()})
+	res, err := bashToolExecute(t, tools, `{"command":"echo sandbox-ok"}`)
+	if err != nil {
+		t.Fatalf("sandboxed bash execute: %v", err)
+	}
+	if res.isErr || !strings.Contains(res.text, "sandbox-ok") {
+		t.Fatalf("sandboxed bash broken: isError=%v out=%s", res.isErr, res.text)
+	}
+	// A failing command still reports its exit code through the wrapper.
+	res, err = bashToolExecute(t, tools, `{"command":"exit 7"}`)
+	if err != nil || !res.isErr {
+		t.Fatalf("sandboxed failing command: err=%v isError=%v", err, res.isErr)
+	}
+	var details struct {
+		Exit int `json:"exit"`
+	}
+	if err := json.Unmarshal([]byte(res.details), &details); err != nil || details.Exit != 7 {
+		t.Fatalf("sandboxed exit code not reported: details=%s err=%v", res.details, err)
+	}
+}
+
+// TestSandboxProviderWiring asserts the switch: off is nil (plain child
+// processes), on is the platform provider.
+func TestSandboxProviderWiring(t *testing.T) {
+	if SandboxProvider(false) != nil {
+		t.Fatal("sandbox off must not install a provider")
+	}
+	if SandboxProvider(true) == nil {
+		t.Fatal("sandbox on must install a provider")
 	}
 }
 
 type toolOutcome struct {
 	text    string
-	details []byte
+	details string
 	isErr   bool
 }
 
 func bashResult(t *testing.T, tools []core.AgentTool, args string) toolOutcome {
 	t.Helper()
+	res, err := bashToolExecute(t, tools, args)
+	if err != nil {
+		t.Fatalf("bash execute: %v", err)
+	}
+	return res
+}
+
+func bashToolExecute(t *testing.T, tools []core.AgentTool, args string) (toolOutcome, error) {
 	for _, tl := range tools {
 		if tl.Name != "bash" {
 			continue
 		}
 		res, err := tl.Execute(context.Background(), "sbx1", json.RawMessage(args), nil)
 		if err != nil {
-			t.Fatalf("bash execute: %v", err)
+			return toolOutcome{}, err
 		}
-		return toolOutcome{text: resultText(t, res), details: res.Details, isErr: res.IsError}
+		return toolOutcome{text: resultText(t, res), details: string(res.Details), isErr: res.IsError}, nil
 	}
-	t.Fatal("the bash tool is missing")
-	return toolOutcome{}
-}
-
-func bytesContains(b, sub []byte) bool {
-	return len(sub) > 0 && len(b) >= len(sub) && strings.Contains(string(b), string(sub))
+	return toolOutcome{}, errors.New("the bash tool is missing")
 }

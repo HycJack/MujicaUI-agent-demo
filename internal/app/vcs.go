@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"crux-agent/internal/vcs"
-	"github.com/ZacharyZhang-NY/MujicaUI/git"
+	"github.com/HycJack/MujicaUI/git"
 )
 
 // vcsState is the async version-control state the Repository tab renders.

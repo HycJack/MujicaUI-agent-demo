@@ -23,7 +23,7 @@ func TestChatPaneLayout(t *testing.T) {
 	visible := []string{
 		"Watching; I'll post the moment tonight's run passes ten minutes.", // a2, last row
 		"Nice. Watch it tonight and page me if it slips.",                  // u2
-		"OpenAI · GPT-4o", // composer backend label
+		"no model configured", // composer backend label (none ships by default)
 		"Send",
 	}
 	for _, s := range visible {

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"crux-agent/internal/store"
-	"github.com/ZacharyZhang-NY/MujicaUI/chat"
+	"github.com/HycJack/MujicaUI/chat"
 )
 
 // dirExists reports whether path is an existing directory.

@@ -17,9 +17,9 @@ import (
 	"strings"
 
 	"crux-agent/internal/engine"
-	"github.com/ZacharyZhang-NY/MujicaUI/icons"
-	"github.com/ZacharyZhang-NY/MujicaUI/input"
-	"github.com/ZacharyZhang-NY/MujicaUI/overlay"
+	"github.com/HycJack/MujicaUI/icons"
+	"github.com/HycJack/MujicaUI/input"
+	"github.com/HycJack/MujicaUI/overlay"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -246,7 +246,7 @@ func (a *app) providersPane(c *ui.Context) {
 		// loop form follows; the claude form lives in settings_claude.go.
 		input.FormField(c, "Agent type", input.FormFieldOptions{
 			Description: "The built-in loop calls a provider API with Crux's own tools; Claude Code drives the claude CLI.",
-		}, func() *ui.Element {
+		}, func() ui.Element {
 			kindIdx := 0
 			if a.llm.Backend == "claude" {
 				kindIdx = 1
@@ -268,7 +268,7 @@ func (a *app) providersPane(c *ui.Context) {
 
 		// Provider
 		prevProvider := a.llm.Provider
-		input.FormField(c, "Provider", input.FormFieldOptions{Description: "A known provider, or OpenAI-compatible for a custom endpoint."}, func() *ui.Element {
+		input.FormField(c, "Provider", input.FormFieldOptions{Description: "A known provider, or OpenAI-compatible for a custom endpoint."}, func() ui.Element {
 			return input.Select(c, &a.llm.Provider, a.knownProviderOptions(), input.SelectOptions{}).Element
 		})
 		if prevProvider != a.llm.Provider {
@@ -281,7 +281,7 @@ func (a *app) providersPane(c *ui.Context) {
 		if a.llm.Provider == openaiCompat {
 			desc = "Required for OpenAI-compatible, e.g. https://host/v1"
 		}
-		input.FormField(c, "Base URL", input.FormFieldOptions{Description: desc}, func() *ui.Element {
+		input.FormField(c, "Base URL", input.FormFieldOptions{Description: desc}, func() ui.Element {
 			return input.InputGroup(c, &a.llm.BaseURL, input.InputGroupOptions{Placeholder: "https://…/v1", Label: "Base URL"}).Input
 		})
 		if prevBase != a.llm.BaseURL {
@@ -290,7 +290,7 @@ func (a *app) providersPane(c *ui.Context) {
 		}
 
 		// API key
-		input.FormField(c, "API key", input.FormFieldOptions{Description: "Leave blank to use the provider's env var."}, func() *ui.Element {
+		input.FormField(c, "API key", input.FormFieldOptions{Description: "Leave blank to use the provider's env var."}, func() ui.Element {
 			return input.InputGroup(c, &a.llm.APIKey, input.InputGroupOptions{Placeholder: "sk-…", Label: "API key"}).Input
 		})
 
@@ -299,7 +299,7 @@ func (a *app) providersPane(c *ui.Context) {
 
 		// Reasoning: a fixed ladder of thinking tiers; it belongs with the
 		// backend it applies to, and models without reasoning ignore it.
-		input.FormField(c, "Reasoning", input.FormFieldOptions{Description: "Thinking tier for models that support it; ignored otherwise."}, func() *ui.Element {
+		input.FormField(c, "Reasoning", input.FormFieldOptions{Description: "Thinking tier for models that support it; ignored otherwise."}, func() ui.Element {
 			return input.Select(c, &a.llm.Thinking, reasoningTiers, input.SelectOptions{}).Element
 		})
 
@@ -321,7 +321,7 @@ func (a *app) providersPane(c *ui.Context) {
 // modelField renders the Model TreeSelect, plus a "fetch models" action and its
 // status whenever a Base URL is set (the custom-endpoint path).
 func (a *app) modelField(c *ui.Context) {
-	input.FormField(c, "Model", input.FormFieldOptions{Description: "Choose a model; for a custom endpoint, fetch the list first."}, func() *ui.Element {
+	input.FormField(c, "Model", input.FormFieldOptions{Description: "Choose a model; for a custom endpoint, fetch the list first."}, func() ui.Element {
 		sel := []string{}
 		if a.llm.Model != "" {
 			sel = append(sel, a.llm.Model)
@@ -413,34 +413,24 @@ func (a *app) fetchModels() {
 				return
 			}
 			a.provView.fetched = ids
-			if a.llm.Model == "" && len(ids) > 0 {
-				a.llm.Model = ids[0]
-			}
 		})
 	}()
 }
 
 func (a *app) rebindModel() {
-	// Custom endpoint: the model comes from the fetched list (or is typed), so
-	// only keep it if it is known, else fall back to the first fetched or clear.
+	// Custom endpoint: the model comes from the fetched list (or is typed),
+	// so only keep it if it is known; no model is picked automatically.
 	if a.llm.Provider == openaiCompat {
 		if a.llm.Model != "" && !slices.Contains(a.provView.fetched, a.llm.Model) {
-			if len(a.provView.fetched) > 0 {
-				a.llm.Model = a.provView.fetched[0]
-			} else {
-				a.llm.Model = ""
-			}
+			a.llm.Model = ""
 		}
 		return
 	}
+	// A known provider: keep the current model only if it is still on the
+	// provider's list; a model that is not is dropped — none is auto-picked.
 	ms := a.modelOptions()
-	if len(ms) == 0 {
+	if a.llm.Model != "" && !slices.ContainsFunc(ms, func(o input.SelectOption[string]) bool { return o.Value == a.llm.Model }) {
 		a.llm.Model = ""
-		return
-	}
-	// Keep the same id if still present, else pick the first model.
-	if !slices.ContainsFunc(ms, func(o input.SelectOption[string]) bool { return o.Value == a.llm.Model }) {
-		a.llm.Model = ms[0].Value
 	}
 	a.applyModelDefaults()
 }
@@ -497,7 +487,7 @@ func (a *app) agentPane(c *ui.Context) {
 	k := tokens(c)
 	ui.Column(c).Gap(14).Children(func() {
 		// System prompt
-		input.FormField(c, "System prompt", input.FormFieldOptions{Description: "Shapes role and tone for every reply."}, func() *ui.Element {
+		input.FormField(c, "System prompt", input.FormFieldOptions{Description: "Shapes role and tone for every reply."}, func() ui.Element {
 			return ui.TextArea(c, &a.llm.SystemPrompt).MinHeight(96).Label("System prompt")
 		})
 
@@ -515,6 +505,16 @@ func (a *app) agentPane(c *ui.Context) {
 					ui.Text(c, t.desc).FontSize(11).TextColor(k.TextMuted)
 				})
 			})
+		}
+
+		// Sandbox: bash runs inside the workspace-scoped boundary —
+		// workdir read-write, a scratch HOME, no network, credential
+		// stores excluded. Off runs commands as plain child processes.
+		on := a.llm.SandboxOn()
+		if input.Switch(c, &on, "Sandbox shell commands", input.SwitchOptions{
+			Description: "Run bash inside the workspace boundary: writes limited to the workspace and a scratch home, network denied. A missing backend reports an error instead of running unsandboxed.",
+		}).Changed() {
+			a.llm.Sandbox = &on
 		}
 
 		// Stop / status

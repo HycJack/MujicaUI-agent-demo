@@ -116,4 +116,8 @@ func TestScreenshots(t *testing.T) {
 	k := newApp()
 	k.paletteOpen = true
 	shot("command-palette", k)
+
+	r := newApp()
+	r.setModel("o3") // a reasoning model: the composer shows the thinking picker
+	shot("composer-reasoning", r)
 }

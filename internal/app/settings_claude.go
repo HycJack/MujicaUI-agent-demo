@@ -8,7 +8,7 @@ package app
 import (
 	"os/exec"
 
-	"github.com/ZacharyZhang-NY/MujicaUI/input"
+	"github.com/HycJack/MujicaUI/input"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -19,7 +19,7 @@ func (a *app) claudeProvidersPane(c *ui.Context) {
 		// CLI detection
 		input.FormField(c, "Claude CLI", input.FormFieldOptions{
 			Description: "The claude binary Crux spawns; install with npm i -g @anthropic-ai/claude-code and sign in with claude login.",
-		}, func() *ui.Element {
+		}, func() ui.Element {
 			return ui.Column(c).Gap(6).Children(func() {
 				status := "not found on PATH"
 				color := kDanger(c)
@@ -47,7 +47,7 @@ func (a *app) claudeProvidersPane(c *ui.Context) {
 		// Model alias: sonnet / opus / …; empty = the CLI's default.
 		input.FormField(c, "Model", input.FormFieldOptions{
 			Description: "A model alias the CLI accepts (sonnet, opus, …); leave empty for the CLI's default.",
-		}, func() *ui.Element {
+		}, func() ui.Element {
 			return input.InputGroup(c, &a.llm.Model, input.InputGroupOptions{
 				Placeholder: "sonnet — empty uses the CLI default", Label: "Model",
 			}).Input
@@ -56,7 +56,7 @@ func (a *app) claudeProvidersPane(c *ui.Context) {
 		// Auth
 		input.FormField(c, "Auth", input.FormFieldOptions{
 			Description: "The CLI signs in itself (claude login); Crux stores no key for this backend.",
-		}, func() *ui.Element {
+		}, func() ui.Element {
 			return ui.Text(c, "Uses the CLI's own sign-in").FontSize(11).TextColor(kTextMuted(c))
 		})
 	})

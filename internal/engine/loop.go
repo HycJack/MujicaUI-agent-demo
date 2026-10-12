@@ -35,6 +35,7 @@ type Config struct {
 
 	Backend         string        // "" | "builtin" | "claude"
 	Mode            Mode          // three-level approval selector (spec §2)
+	Sandbox         bool          // run agent-mode bash inside the workspace-scoped sandbox
 	OnApproval      ApprovalFunc  // nil → an ask settles as a denial
 	ApprovalTimeout time.Duration // 0 → DefaultApprovalTimeout
 	ClaudeBin       string        // resolved claude CLI path (tests: a fake)
@@ -126,7 +127,7 @@ func Run(ctx context.Context, cfg Config, history []Message, cb Callbacks) error
 		SystemPrompt: cfg.SystemPrompt,
 		Tools: Tools(cfg.Workdir, Gate{
 			Mode:            cfg.Mode,
-			Sandbox:         NewSandbox(),
+			Sandbox:         SandboxProvider(cfg.Sandbox),
 			OnApproval:      cfg.OnApproval,
 			ApprovalTimeout: cfg.ApprovalTimeout,
 		}),
