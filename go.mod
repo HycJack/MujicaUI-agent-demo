@@ -5,9 +5,9 @@ go 1.27.1
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
-	github.com/HycJack/MujicaUI v0.0.0-20261010172148-33d620fb6e03
+	github.com/HycJack/MujicaUI v0.0.0-20261015035301-d937051183be
 	github.com/HycJack/pi-ai-go v0.3.0
-	github.com/egoist/mygo v0.3.4
+	github.com/egoist/mygo v0.5.1
 )
 
 require (
@@ -15,4 +15,5 @@ require (
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/go-text/typesetting-utils v0.0.0-20260922124329-7d4869a3934e // indirect
 	golang.org/x/image v0.46.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
